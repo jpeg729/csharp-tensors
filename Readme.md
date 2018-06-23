@@ -15,10 +15,7 @@ double[] data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
 var tensor_of_data = new Tensor(data);
 ```
 
-If you need to create a tensor from data with a specified shape, then do this...
-```
-var shaped_tensor_of_data = tensor_of_data.View(shape);
-```
+If you need to create a tensor from data with a specified shape, then just `Reshape()` it.
 
 ### Tensor filling
 
@@ -29,15 +26,15 @@ as a reminder of that fact. These methods will issue a warning in some circumsta
 These methods return `void` and cannot be chained.
 
 * `Fill_(value)`
-* `FillWithCount_()` fills the tensor with the numbers 0, 1, 2, ...
-* `Uniform_(min, max)` uniformly distributed random numbers
-* `Normal_(mean, std)` normally distributed random numbers
+* `FillWithRange_(start, step)` fills the tensor with the numbers start, start + step, start + 2*step
+* `FillUniform_(min, max)` uniformly distributed random numbers
+* `FillNormal_(mean, std)` normally distributed random numbers
 
 ### String representation and printing
 
 * `ToString()` returns a string containing tensor shape and size.
 * `PrintContents()` prints the _entire_ contents of the tensor to the console.
-* `ImplementationDetails()` prints the size of the tensor and its strides, etc.
+* `PrintImplementationDetails()` prints the size of the tensor and its strides, etc.
 * `ContentsAsString()` returns the _entire_ contents of the tensor as a string
   formatted in the same way `PrintContents()` would print it.
 
@@ -48,19 +45,19 @@ is shared with the new Tensor. This is similar to the concept of views in numpy.
 
 * `Copy()` - always copies the data, regardless of whether the tensor is contiguous or not.
 * `T()` - switches the last two dimensions.
-* `Permute(new, order, as, args, or, array)` - reorders the dimensions of the tensor.
-* `View(new, dims, as, args, or, array)` - changes the shape of the Tensor.
-  N.B. `View(..)` will throw an error if the tensor is not contiguous enough.
-* `Slice(dim, start, count)` - takes `count` elements from `start` along dimension `dim`.
+* `Permute(new, order, as, args, or, array)` - reorders the dimensions.
+* `Reshape(new, dims, as, args, or, array)` - changes the shape.
+  N.B. `Reshape(..)` will throw an error if the tensor is not contiguous enough.
 * `Squeeze(dim)` - removes the given dimension, if the length of that dimension is 1.
 * `Unsqueeze(dim)` - inserts a new dimension of length 1.
+* `Slice(dim, start, count)` - takes `count` elements from `start` along dimension `dim`.
 
 <details>
   <summary>Expand for examples</summary>
 
 ```c#
 var t1 = new Tensor(2, 3, 4);
-t1.FillWithCount_();
+t1.FillWithRange_();
 t1.T().PrintContents();
 
 // Tensor of shape (2,4,3), total size 24
@@ -90,7 +87,7 @@ t1.Permute(order).PrintContents();
 //   21, 22, 23, 24
 
 int[] new_shape = {1, 1, -1, 4};
-t1.View(new_shape).PrintContents();
+t1.Reshape(new_shape).PrintContents();
 
 // Tensor of shape (1,1,6,4), total size 24
 // 0,0

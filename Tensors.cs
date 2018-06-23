@@ -9,19 +9,28 @@ using System.Diagnostics;
 
 /**
  * TODO
- * - why _base_stride? and is it truly necessary?
- *
- * - Equality
- *
+ * - Pad(dim, before, after, value || replicate || reflect)
+ * 
+ * - Should gradients be Tensors, or double[] ? 
+ *   Tensors, since they are easier to manipulate
+ *   - But how to avoid making Backward at each op?
+ *     - bool t.noGrad perhaps
+ * 
+ * - Math for neural nets
+ * 
+ * - Parallelise some ops using Environment.ProcessorCount
+ * 
  * - Tests
- *   - which methods alter _start, shape and _strides
- *   - test them comprehensively
+ *   - given an order check
+ *     t.Slice(d, ..).Permute(order) == t.Permute(order).Slice(order[d], ..)
+ *     t.Permute(order).Slice(d, ..).Permute(UnPermuteOrder(order)) == t.Slice(order[d], ..)
+ * 
  *
  * - Question: how to get _data out efficiently without making it public?
- *   - tensor[coords] accessor for one element at a time...
- *   - DangerouslyAccessData_() which returns the data array by reference
+ *   - tensor[coords] gettor for one element at a time...
+ *   - DangerouslyAccessData_() returns the data array by reference
  *
- *
+ * - algo strassen
  */
 
 /// <summary>
@@ -39,14 +48,14 @@ using System.Diagnostics;
 /// <example>
 /// The idea is to be able to use it as follows...
 /// <code>
-/// var t1 = Tensor(shape1, data1, requires_grad=true);
-/// var t2 = Tensor(shape2, data2, requires_grad=false);
+/// var t1 = Tensor(shape1, data1, requiresGrad=true);
+/// var t2 = Tensor(shape2, data2, requiresGrad=false);
 ///
 /// var t3 = t1.plus(t2);
-/// var loss = t3.loss_function(target_values);
-/// loss.Backwards(); // this should backpropagate all the way back to the inputs.
+/// var loss = t3.lossFunction(targetValues);
+/// loss.Backward(); // this should backpropagate all the way back to the inputs.
 ///
-/// var t1_gradient = t1.grad;
+/// var t1Gradient = t1.grad; // ??
 /// </code>
 /// </example>
 class Tensor
@@ -55,9 +64,10 @@ class Tensor
 
     public readonly int[]  shape = new int[] {1};
     public readonly bool   contiguous = true;
-    public bool            requires_grad = false;
+    public readonly bool   naturalOrder = true;
+    public bool            requiresGrad = false;
+    public bool            noGrad = false;
 
-    private readonly int   _base_stride = 1;
     private readonly int[] _strides = new int[] {1};
     private readonly int   _start = 0;
     private double[]       _data;
@@ -67,7 +77,7 @@ class Tensor
     public int rank { get { return shape.Length; } }
 
     public delegate void BackwardsMethod(double[] grad);
-    public BackwardsMethod Backwards;
+    public BackwardsMethod Backward;
 
     #endregion
 
@@ -77,54 +87,63 @@ class Tensor
     {
         this.shape = new int[] {data.Length};
         _data = data;
-        Detach();
+        Detach_();
     }
 
     public Tensor(params int[] shape)
     {
         this.shape = shape;
         _data = new double[size];
-        _strides = Tensor.MakeStrides(shape, _base_stride);
-        Detach();
+        _strides = Tensor.MakeStrides(shape, 1);
+        Detach_();
     }
 
     public Tensor(double scalar)
     {
         _data = new double[] { scalar };
-        Detach();
+        Detach_();
     }
 
-    private Tensor(double[] data, int[] shape, int base_stride, int[] strides, int start,
-        BackwardsMethod backwards, bool contiguous = true)
+    private Tensor(double[] data, int[] shape, int[] strides, int start,
+        BackwardsMethod backward)
     {
         this.shape = shape;
         _data = data;
-        _base_stride = base_stride;
-        _strides = strides ?? Tensor.MakeStrides(shape, _base_stride);
+        _strides = strides;
         _start = start;
-        var natural_order = true;
         for (var i = 0; i < rank - 1; i++)
         {
-            if (_strides[i] != 0 && _strides[i] <= _strides[i + 1])
+            if (_strides[i] != 0 && _strides[i] < _strides[i + 1])
             {
-                natural_order = false;
+                naturalOrder = false;
                 break;
             }
         }
-        this.contiguous = natural_order && _strides[0] * shape[0] == size;
-        Detach();
+        int maxStride = 0;
+        int maxStrideIndex = -1;
+        for (var i = 0; i < rank; i++)
+        {
+            if (_strides[i] > maxStride)
+            {
+                maxStride = _strides[i];
+                maxStrideIndex = i;
+            }
+        }
+        this.contiguous = _strides[maxStrideIndex] * shape[maxStrideIndex] == size;
+        //Console.WriteLine($"New tensor ({String.Join(",", shape)}) ({String.Join(",", _strides)}) from {start}, contig {contiguous}");
+        //Console.WriteLine($"naturalOrder {naturalOrder} _strides[0] * shape[0] {_strides[0] * shape[0]} == {size}");
+        //PrintImplementationDetails();
+        Backward = backward;
     }
 
-    private static int[] MakeStrides(int[] shape, int base_stride)
+    private static int[] MakeStrides(int[] shape, int baseStride)
     {
         // This function may be better off in a Utils class.
         var strides = new int[shape.Length];
-        var stride = base_stride;
-        for (var i = shape.Length - 1; i >= 0; i--)
-        {
-            strides[i] = stride;
-            stride *= shape[i];
-        }
+        strides[shape.Length - 1] = baseStride;
+        for (var i = shape.Length - 2; i >= 0; i--)
+            strides[i] = strides[i + 1] * shape[i + 1];
+
         return strides;
     }
 
@@ -134,7 +153,7 @@ class Tensor
 
     private void WarnAboutInplaceModification()
     {
-        if (Backwards != DefaultBackwards)
+        if (Backward != DefaultBackward)
         {
             Console.WriteLine("WARNING inplace modification of tensor contents can mess up the results of automatic differentiation.");
             Console.WriteLine(Environment.StackTrace);
@@ -143,32 +162,30 @@ class Tensor
 
     public void Fill_(double value)
     {
+        WarnAboutInplaceModification();
         Array.Fill(_data, value, _start, size);
-        WarnAboutInplaceModification();
     }
 
-    public void FillWithCount_()
+    public void FillWithRange_(double start = 0, double step = 1)
     {
+        WarnAboutInplaceModification();
         for (var i = 0; i < size; i++)
-            _data[i + _start] = i;
-
-        WarnAboutInplaceModification();
+            _data[i + _start] = start + i * step;
     }
 
-    public void Uniform_(double minval = 0, double maxval = 1)
+    public void FillUniform_(double minval = 0, double maxval = 1)
     {
+        WarnAboutInplaceModification();
         var random = new Random();
-
         for (var i = 0; i < size; i++)
             _data[i + _start] = minval + random.NextDouble() * (maxval - minval);
 
-        WarnAboutInplaceModification();
     }
 
-    public void Normal_(double mean = 0, double std = 1)
+    public void FillNormal_(double mean = 0, double std = 1)
     {
+        WarnAboutInplaceModification();
         var random = new Random();
-
         for (var i = 0; i < size; i++)
         {
             // Box-Muller transform
@@ -182,8 +199,6 @@ class Tensor
             if (++i < size)
                 _data[i + _start] = mean + std * distance * Math.Cos(angle);
         }
-
-        WarnAboutInplaceModification();
     }
 
     #endregion
@@ -196,11 +211,10 @@ class Tensor
             (size == 1 ? $"containing value {_data[_start]}" : $"total size {size}");
     }
 
-    public void ImplementationDetails()
+    public void PrintImplementationDetails()
     {
-        Console.Error.WriteLine(this);
-        Console.Error.WriteLine($"Strides {_base_stride}, ({String.Join(",", _strides)})");
-        Console.Error.WriteLine($"Start {_start}, data size {_data.Length}, contiguous {contiguous}");
+        Console.Error.WriteLine(this + $", contiguous {contiguous}, naturalOrder {naturalOrder}");
+        Console.Error.WriteLine($"Strides ({String.Join(",", _strides)}), start {_start}, data size {_data.Length}");
     }
 
     public void PrintContents()
@@ -212,23 +226,22 @@ class Tensor
     public string ContentsAsString()
     {
         var output = new List<string>();
-        var indices = new int[rank];
-        var data_index = _start;
-        var matrix_row = new double[shape[rank - 1]];
-        var row_head = 0;
-        while (data_index < _data.Length)
+        var (indices, dataIndex) = StartPosition();
+        var matrixRow = new double[shape[rank - 1]];
+        var rowHead = 0;
+        while (dataIndex < _data.Length)
         {
             if (rank > 2 && indices[rank - 2] == 0 && indices[rank - 1] == 0)
                 output.Add($"{String.Join(",", indices.Take(rank - 2))}");
 
-            matrix_row[row_head++] = _data[data_index];
+            matrixRow[rowHead++] = _data[dataIndex];
 
-            if (row_head == shape[rank - 1])
+            if (rowHead == shape[rank - 1])
             {
-                row_head = 0;
-                output.Add($"  {String.Join(", ", matrix_row)}");
+                rowHead = 0;
+                output.Add($"  {String.Join(", ", matrixRow)}");
             }
-            IncrementPosition(ref indices, ref data_index, shape);
+            IncrementPosition(ref indices, ref dataIndex, shape);
         }
         return String.Join("\n", output);
     }
@@ -238,35 +251,42 @@ class Tensor
     #region Indexing and broadcasting
 
     // single element indexing via coordinates
-    public double this[params int[] indices] { get { return _data[DataIndex(indices)]; } }
+    public double this[params int[] indices] 
+    { 
+        get { return _data[DataIndex(indices)]; } 
+        set { 
+            WarnAboutInplaceModification();
+            _data[DataIndex(indices)] = value; 
+        } 
+    }
 
     public double[] DangerouslyAccessData_()
     {
         return _data;
     }
 
-    public bool BroadcastableTo(int[] desired_shape)
+    public bool BroadcastableTo(int[] desiredShape)
     {
-        int[] shape_to_imitate;
-        if (desired_shape.Length > rank)
+        int[] shapeToImitate;
+        if (desiredShape.Length > rank)
         {
-            shape_to_imitate = new int[rank];
-            Array.Copy(desired_shape, desired_shape.Length - rank, shape_to_imitate, 0, rank);
+            shapeToImitate = new int[rank];
+            Array.Copy(desiredShape, desiredShape.Length - rank, shapeToImitate, 0, rank);
         }
         else
         {
-            shape_to_imitate = desired_shape;
+            shapeToImitate = desiredShape;
         }
 
-        if (shape_to_imitate.Length != rank)
+        if (shapeToImitate.Length != rank)
         {
             throw new ArgumentException(
-                $"Bad desired shape {String.Join(",", desired_shape)} for broadcasting to from {String.Join(",", shape)}.");
+                $"Bad desired shape {String.Join(",", desiredShape)} for broadcasting to from {String.Join(",", shape)}.");
         }
 
         for (int i = 0; i < shape.Length; i++)
         {
-            if (shape[i] > 1 && shape[i] != shape_to_imitate[i])
+            if (shape[i] > 1 && shape[i] != shapeToImitate[i])
                 return false;
         }
         return true;
@@ -276,26 +296,26 @@ class Tensor
     /// Use this function for looping over a tensor.
     ///
     /// indices should be initialised to all zeros.
-    /// data_index should be initialised to _start.
+    /// dataIndex should be initialised to _start.
     ///
-    /// First check that this tensor is BroadcastableTo(desired_shape).
+    /// First check that this tensor is BroadcastableTo(desiredShape).
     ///
     /// Use of ref serves as a reminder that this function mutates those inputs.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void IncrementPosition(ref int[] indices, ref int data_index, int[] desired_shape = null)
+    private void IncrementPosition(ref int[] indices, ref int dataIndex, int[] desiredShape = null)
     {
-        if (desired_shape == null)
-            desired_shape = shape;
+        if (desiredShape == null)
+            desiredShape = shape;
 
         for (var dim = indices.Length - 1; dim >= 0; dim--)
         {
             indices[dim] += 1;
-            if (indices[dim] < desired_shape[dim])
+            if (indices[dim] < desiredShape[dim])
             {
-                if (shape[dim] > 1) // Only modify data_index if we are not broadcasting along dim.
+                if (shape[dim] > 1) // Only modify dataIndex if we are not broadcasting along dim.
                 {
-                    data_index += _strides[dim];
+                    dataIndex += _strides[dim];
                 }
                 break;
             }
@@ -304,14 +324,19 @@ class Tensor
                 indices[dim] = 0;
                 if (shape[dim] > 1)
                 {
-                    data_index -= _strides[dim] * (shape[dim] - 1);
+                    dataIndex -= _strides[dim] * (shape[dim] - 1);
                 }
                 if (dim == 0) // End of indexable data.
                 {
-                    data_index = _data.Length;
+                    dataIndex = _data.Length;
                 }
             }
         }
+    }
+    
+    public (int[] indices, int head) StartPosition()
+    {
+        return (new int[rank], _start);
     }
 
     /// <summary>
@@ -319,7 +344,7 @@ class Tensor
     /// </summary>
     private int DataIndex(int[] indices)
     {
-        var data_index = _start;
+        var dataIndex = _start;
         for (var i = 0; i < indices.Length; i++)
         {
             var index = indices[i];
@@ -333,9 +358,9 @@ class Tensor
                 throw new ArgumentOutOfRangeException($"Received {i}th index {indices[i]} for shape {shape}");
             }
 
-            data_index += index * _strides[i];
+            dataIndex += index * _strides[i];
         }
-        return data_index;
+        return dataIndex;
     }
 
     #endregion
@@ -343,75 +368,81 @@ class Tensor
     #region Autograd
 
     /// <summary>
-    /// Sets the Backwards delegate to a default one that either accumulates
-    /// gradients in _grad if requires_grad, or does nothing.
+    /// Returns a new Tensor with the default Backward delegate.
     ///
-    /// This stops backpropagation from going any further back through the
-    /// computation graph.
+    /// If this new Tensor is used in calculations which are then differentiated,
+    /// then backpropagation stops here.
     /// </summary>
-    public void Detach()
+    public Tensor Detach()
     {
-        Backwards = DefaultBackwards;
+        return new Tensor(_data, shape, _strides, _start, DefaultBackward);
+    }
+    
+    /// <summary>
+    /// Sets the Backward delegate to a default one that either accumulates
+    /// gradients in _grad if requiresGrad, or does nothing.
+    ///
+    /// If this Tensor is used in calculations which are then differentiated,
+    /// then backpropagation will not flow back beyond this Tensor.
+    /// </summary>
+    public void Detach_()
+    {
+        Backward = DefaultBackward;
     }
 
-    public void DefaultBackwards(double[] grad)
+    public void DefaultBackward(double[] grad)
     {
-        if (!requires_grad)
+        if (!requiresGrad)
             return;
 
         if (_grad == null)
             _grad = new double[_data.Length];
 
-        if (contiguous)
+        if (contiguous && naturalOrder)
         {
             Array.Copy(grad, 0, _grad, _start, size);
         }
         else
         {
-            int[] indices = new int[rank];
-            int write_head = _start;
+            var (indices, writeHead) = StartPosition();
             foreach (var element in grad)
             {
-                _grad[write_head] = element;
-                IncrementPosition(ref indices, ref write_head, shape);
+                _grad[writeHead] = element;
+                IncrementPosition(ref indices, ref writeHead, shape);
             }
         }
     }
 
     #endregion
 
-    #region Basic tensor ops, Copy, View, Slice, etc.
+    #region Basic tensor ops, Copy, Reshape, Slice, etc.
 
     private void ShowWarningAndStackTrace(string warning)
     {
-        if (Backwards != DefaultBackwards)
-        {
-            Console.WriteLine("WARNING: " + warning);
-            Console.WriteLine(Environment.StackTrace);
-        }
+        Console.WriteLine("WARNING: " + warning);
+        Console.WriteLine(Environment.StackTrace);
     }
 
     public Tensor Copy(bool warnIfContiguous = true)
     {
-        var new_data = new double[size];
-        if (contiguous)
+        var newData = new double[size];
+        if (contiguous && naturalOrder)
         {
             if (warnIfContiguous)
                 ShowWarningAndStackTrace("Copying contiguous tensor data, is this necessary?");
 
-            Array.Copy(_data, _start, new_data, 0, size);
-            return new Tensor(new_data).View(shape);
+            Array.Copy(_data, _start, newData, 0, size);
+            return new Tensor(newData).Reshape(shape);
         }
 
-        int[] indices = new int[rank];
-        int read_head = _start;
+        var (indices, readHead) = StartPosition();
 
-        for (var write_head = 0; write_head < new_data.Length; write_head++)
+        for (var writeHead = 0; writeHead < newData.Length; writeHead++)
         {
-            new_data[write_head] = _data[read_head];
-            IncrementPosition(ref indices, ref read_head, shape);
+            newData[writeHead] = _data[readHead];
+            IncrementPosition(ref indices, ref readHead, shape);
         }
-        return new Tensor(new_data).View(shape);
+        return new Tensor(newData).Reshape(shape);
     }
 
     /// <summary>
@@ -430,99 +461,175 @@ class Tensor
 
     public Tensor Permute(params int[] order)
     {
-        var new_shape = new int[rank];
-        var new_strides = new int[rank];
+        if (order.Length != rank)
+            throw new ArgumentException($"Permute({String.Join(",", order)}) wrong number of args for shape ({String.Join(",", shape)})");
+        
+        var newShape = new int[rank];
+        var newStrides = new int[rank];
         for (var i = 0; i < rank; i++)
         {
-            new_shape[i] = shape[order[i]];
-            new_strides[i] = _strides[order[i]];
+            newShape[i] = shape[order[i]];
+            newStrides[i] = _strides[order[i]];
         }
-        return new Tensor(_data, new_shape, _base_stride, new_strides, _start, grad => this.Backwards(grad));
+        BackwardsMethod permuteGrads = DefaultBackward;
+        if (requiresGrad || Backward != DefaultBackward)
+        {
+            permuteGrads = grad => this.Backward(grad); // TODO unpermute grads
+        }
+        return new Tensor(_data, newShape, newStrides, _start, permuteGrads);
+    }
+    
+    public static int[] UnPermuteOrder(int[] permuteOrder)
+    {
+        var unPermuteOrder = new int[permuteOrder.Length];
+        for (var i = 0; i < permuteOrder.Length; i++)
+            unPermuteOrder[permuteOrder[i]] = i;
+        return unPermuteOrder;
     }
 
-    public Tensor View(params int[] shape)
+    public Tensor Reshape(params int[] shape)
     {
-        var wildcard_index = Array.IndexOf(shape, -1);
-        if (wildcard_index != Array.LastIndexOf(shape, -1))
-            throw new ArgumentException("Too many unknowns in shape");
+        //Console.WriteLine($"\nReshape({String.Join(",", shape)}) from ({String.Join(",", this.shape)})");
+        //PrintImplementationDetails();
+        
+        var wildcardIndex = Array.IndexOf(shape, -1);
+        if (wildcardIndex != Array.LastIndexOf(shape, -1))
+            throw new ArgumentException($"Too many unknowns in shape ({String.Join(",", shape)})");
 
-        var new_size = shape.Aggregate((a, x) => a * x);
+        var newSize = shape.Aggregate((a, x) => a * x);
 
-        if (wildcard_index >= 0)
+        if (wildcardIndex >= 0)
         {
-            int value = size / -new_size;
-            shape[wildcard_index] = value;
-            new_size *= -value;
+            int missingDivisor = size / -newSize;
+            shape[wildcardIndex] = missingDivisor;
+            newSize *= -missingDivisor;
         }
+        //Console.WriteLine($"New size {newSize} = shape ({String.Join(",", shape)})");
+        
+        if (newSize != size)
+            throw new ArgumentException($"New size {newSize} ({String.Join(",", shape)}) does not match old size {size} ({String.Join(",", this.shape)})");
 
-        if (!contiguous)
+        int[] newStrides;
+        
+        if (!contiguous || !naturalOrder)
         {
             // each new dimension must either exactly match an existing dimension,
             // or the product of consecutive new dimensions must match a contiguous
             // section of the existing tensor dimensions.
-            var new_shape_i = 0;
-            var shape_i = 0;
-            var new_dim_size = shape[0];
-            var dim_size = this.shape[0];
-            while (new_shape_i <= shape.Length && shape_i <= this.shape.Length)
+            var newShapeIndex = -1;
+            var oldShapeIndex = -1;
+            var newDimSize = 0;
+            var oldDimSize = 0;
+            var newShape = shape;
+            var oldShape = this.shape;
+            newStrides = new int[newShape.Length];
+            
+            bool contiguousEnough = true;
+            while (newShapeIndex < newShape.Length && oldShapeIndex < oldShape.Length)
             {
-                if (new_dim_size == dim_size)
+                if (newDimSize == oldDimSize)
                 {
-                    new_dim_size = shape[++new_shape_i];
-                    dim_size = this.shape[++shape_i];
+                    //Console.WriteLine("same size dims");
+                    newShapeIndex += 1;
+                    oldShapeIndex += 1;
+                    if (newShapeIndex == newShape.Length && oldShapeIndex == oldShape.Length)
+                        break;
+
+                    newDimSize = newShape[newShapeIndex];
+                    oldDimSize = oldShape[oldShapeIndex];
+                    newStrides[newShapeIndex] = oldShape[oldShapeIndex] * _strides[oldShapeIndex] / newShape[newShapeIndex];
                 }
-                else if (new_dim_size < dim_size && new_shape_i < shape.Length - 1)
+                else if (newDimSize < oldDimSize && newShapeIndex < newShape.Length - 1)
                 {
-                    new_dim_size *= shape[++new_shape_i];
+                    //Console.WriteLine("new dim smaller");
+                    newShapeIndex += 1;
+                    newDimSize *= newShape[newShapeIndex];
+                    newStrides[newShapeIndex] = newStrides[newShapeIndex - 1] / newShape[newShapeIndex];
                 }
-                else if (dim_size < new_dim_size && shape_i < this.shape.Length - 1)
+                else if (oldDimSize < newDimSize)
                 {
-                    if (_strides[shape_i] != _strides[shape_i + 1] * shape[shape_i + 1])
-                        throw new ArgumentException($"View({String.Join(",", shape)}) tensor is not contiguous enough. Run Contiguous() first.");
-                    dim_size *= this.shape[++shape_i];
+                    //Console.WriteLine("old dim smaller");
+                    oldShapeIndex += 1;
+                    if (oldShapeIndex >= oldShape.Length) // can this ever happen?
+                    {
+                        contiguousEnough = false;
+                        throw new ArgumentException($"Reshape({String.Join(",", shape)}) tensor is not contiguous enough. Run Copy() first.");
+                    }
+
+                    if (_strides[oldShapeIndex - 1] != _strides[oldShapeIndex] * oldShape[oldShapeIndex])
+                    {
+                        contiguousEnough = false;
+                        break;
+                    }
+
+                    oldDimSize *= oldShape[oldShapeIndex];
+                }
+                //Console.WriteLine($"newI {newShapeIndex} {newDimSize} oldI {oldShapeIndex} {oldDimSize} -> {String.Join(",", newStrides)}");
+            }
+            //Console.WriteLine($" -> {String.Join(",", newStrides)}");
+            if (!contiguousEnough)
+                //throw new ArgumentException($"Reshape({String.Join(",", shape)}) tensor is not contiguous enough. Run Copy() first.");
+                return Copy().Reshape(shape);
+        }
+        else
+        {
+            newStrides = Tensor.MakeStrides(shape, _strides[_strides.Length - 1]);
+        }
+
+        if (size != newSize)
+            throw new ArgumentException($"Reshape({String.Join(",", shape)}) is incompatible with tensor shape ({String.Join(",", this.shape)})");
+
+        BackwardsMethod reshapeGrads = DefaultBackward;
+        if (requiresGrad || Backward != DefaultBackward)
+        {
+            // reshapeGrads = grad => this.Backward(grad.Reshape(orig_shape));
+            reshapeGrads = grad => this.Backward(grad); // TODO
+        }
+        return new Tensor(_data, shape, newStrides, _start, reshapeGrads);
+    }
+
+    public Tensor Squeeze(int dim = -1)
+    {
+        var newShape = new List<int>();
+        var newStrides = new List<int>();
+        if (dim == -1)
+        {
+            for (var i = 0; i < rank; i++)
+            {
+                if (shape[i] > 1)
+                {
+                    newShape.Add(shape[i]);
+                    newStrides.Add(_strides[i]);
                 }
             }
         }
-
-        if (size != new_size)
-            throw new ArgumentException($"View({String.Join(",", shape)}) is incompatible with tensor shape ({String.Join(",", this.shape)})");
-
-        //if (!contiguous)
-        //    throw new ArgumentException($"View({String.Join(",", shape)}) tensor is not contiguous enough. Run Contiguous() first.");
-
-        var new_strides = Tensor.MakeStrides(shape, _base_stride);
-        return new Tensor(_data, shape, _base_stride, new_strides, _start, grad => this.Backwards(grad));
-    }
-
-    public Tensor Slice(int dim, int start, int length = 1)
-    {
-        if (start + length > shape[dim])
-            throw new ArgumentException($"Slice({dim}, {start}, {length}) incompatible with shape {String.Join(",", shape)}");
-
-        var new_start = _start + start * _strides[dim];
-        var new_shape = new int[rank];
-        shape.CopyTo(new_shape, 0);
-        new_shape[dim] = length;
-        return new Tensor(_data, new_shape, _base_stride, _strides, new_start, grad => this.Backwards(grad));
-    }
-
-    public Tensor Squeeze(int dim)
-    {
-        if (shape[dim] > 1)
-            throw new ArgumentException($"Squeeze({dim}) cannot squeeze dimension of size {shape[dim]}");
-
-        var new_shape = new int[rank - 1];
-        var new_strides = new int[rank - 1];
-        for (var i = 0; i < rank - 1; i++)
+        else
         {
-            new_shape[i] = shape[i < dim ? i : i + 1];
-            new_strides[i] = _strides[i < dim ? i : i + 1];
-        }
-        var new_base_stride = _base_stride;
-        if (dim == rank - 1)
-            new_base_stride *= _strides[rank - 1];
+            if (shape[dim] > 1)
+                throw new ArgumentException($"Squeeze({dim}) cannot squeeze dimension of size {shape[dim]}");
 
-        return new Tensor(_data, new_shape, new_base_stride, new_strides, _start, grad => this.Backwards(grad));
+            for (var i = 0; i < rank; i++)
+            {
+                if (i != dim)
+                {
+                    newShape.Add(shape[i]);
+                    newStrides.Add(_strides[i]);
+                }
+            }
+        }
+        BackwardsMethod unsqueezeGrads = DefaultBackward;
+        if (requiresGrad || Backward != DefaultBackward)
+        {
+            /*unsqueezeGrads = grad => {
+                foreach (var dim in squeezedDims)
+                    grad = grad.Unsqueeze(dim);
+                
+                return this.Backward(grad);
+            }*/
+            unsqueezeGrads = grad => this.Backward(grad); // TODO
+        }
+
+        return new Tensor(_data, newShape.ToArray(), newStrides.ToArray(), _start, unsqueezeGrads);
     }
 
     public Tensor Unsqueeze(int dim)
@@ -530,16 +637,47 @@ class Tensor
         if (dim > rank)
             throw new ArgumentException($"Can't unsqueeze dimension {dim} in shape ({String.Join(",", shape)})");
 
-        var new_shape = new int[rank + 1];
-        var new_strides = new int[rank + 1];
+        var newShape = new int[rank + 1];
+        var newStrides = new int[rank + 1];
         for (var i = 0; i < rank; i++)
         {
-            new_shape[i < dim ? i : i + 1] = shape[i];
-            new_strides[i < dim ? i : i + 1] = _strides[i];
+            newShape[i < dim ? i : i + 1] = shape[i];
+            newStrides[i < dim ? i : i + 1] = _strides[i];
         }
-        new_shape[dim] = 1;
-        new_strides[dim] = 1;
-        return new Tensor(_data, new_shape, _base_stride, new_strides, _start, grad => this.Backwards(grad));
+        newShape[dim] = 1;
+        newStrides[dim] = newStrides[dim - 1];
+        
+        BackwardsMethod squeezeGrads = DefaultBackward;
+        if (requiresGrad || Backward != DefaultBackward)
+        {
+            // squeezeGrads = grad => this.Backward(grad.Squeeze(dim));
+            squeezeGrads = grad => this.Backward(grad); // TODO
+        }
+        return new Tensor(_data, newShape, newStrides, _start, squeezeGrads);
+    }
+
+    public Tensor Slice(int dim, int start, int length = 1)
+    {
+        if (start + length > shape[dim])
+            throw new ArgumentException($"Slice({dim}, {start}, {length}) incompatible with shape {String.Join(",", shape)}");
+
+        var newStart = _start + start * _strides[dim];
+        var newShape = new int[rank];
+        shape.CopyTo(newShape, 0);
+        newShape[dim] = length;
+        
+        BackwardsMethod padGrads = DefaultBackward;
+        if (requiresGrad || Backward != DefaultBackward)
+        {
+            // padGrads = grad => this.Backward(grad.Pad(dim, start - 1, shape[dim] - start - length));
+            padGrads = grad => this.Backward(grad); // TODO
+        }
+        return new Tensor(_data, newShape, _strides, newStart, padGrads);
+    }
+    
+    public Tensor Pad(int dim, int countBefore, int countAfter, double value = 0)
+    {
+        throw new NotImplementedException();
     }
 
     #endregion
@@ -548,19 +686,17 @@ class Tensor
 
     public bool CloseTo(Tensor other, double tolerance = 1e-8)
     {
-        int[] indices = new int[rank];
-        int read_head = _start;
+        var (indices, readHead) = StartPosition();
 
-        int[] indices_other = new int[other.rank];
-        int read_head_other = other._start;
+        var (indicesOther, readHeadOther) = other.StartPosition();
 
-        while(read_head < _data.Length && read_head_other < other._data.Length)
+        while(readHead < _data.Length && readHeadOther < other._data.Length)
         {
-            if (Math.Abs(_data[read_head] - other._data[read_head_other]) > tolerance)
+            if (Math.Abs(_data[readHead] - other._data[readHeadOther]) > tolerance)
                 return false;
 
-            IncrementPosition(ref indices, ref read_head, shape);
-            other.IncrementPosition(ref indices_other, ref read_head_other, other.shape);
+            IncrementPosition(ref indices, ref readHead, shape);
+            other.IncrementPosition(ref indicesOther, ref readHeadOther, other.shape);
         }
         return true;
     }
@@ -581,54 +717,141 @@ class Solution
     static void Main(string[] args)
     {
         var t = new Tensor(2, 3, 4, 5);
-        Debug.Assert(t.size == 2 * 3 * 4 * 5, "Tensor creation");
+        Assert(t.size == 2 * 3 * 4 * 5, "Tensor creation");
 
-        t.Uniform_(0, 1);
-        Debug.Assert(t.View(-1).InefficientEquals(t.T().T().View(-1)), "View01");
-        Debug.Assert(t.View(-1).InefficientEquals(t.View(6, -1, 4).View(-1)), "View02");
+        t.FillUniform_(0, 1);
+        var t2 = new Tensor(2, 3, 4, 5);
+        t2.FillWithRange_();
+        Assert(!t.InefficientEquals(t2), "InefficientEquals01");
+        Assert(t.CloseTo(t), "CloseTo01");
+        Assert(!t.CloseTo(t2), "CloseTo02");
+        
+        Assert(t.Reshape(-1).InefficientEquals(t.T().T().Reshape(-1)), "Reshape01");
+        Assert(t.Reshape(-1).InefficientEquals(t.Reshape(6, -1, 4).Reshape(-1)), "Reshape02");
 
-        Debug.Assert(t.InefficientEquals(t.T().T()), "Permute01");
-        Debug.Assert(t.InefficientEquals(t.Permute(0, 2, 1, 3).Permute(0, 2, 1, 3)), "Permute02");
+        Assert(t.InefficientEquals(t.T().T()), "Permute01");
+        Assert(t.InefficientEquals(t.Permute(0, 2, 1, 3).Permute(0, 2, 1, 3)), "Permute02");
         TestCopyAndFlatten(t.Permute(0, 2, 1, 3), "Permute03");
+        
+        t = new Tensor(6, 4, 10, 2).T();
+        t.FillUniform_();
+        var b = t.Reshape(8, 3, 2, 5, 2);
+        Assert(t.Reshape(-1).CloseTo(b.Reshape(-1)), "Reshape01");
 
         t = new Tensor(3, 3);
-        t.FillWithCount_();
-        Debug.Assert(t.Slice(0, 1, 1).ContentsAsString() == "Tensor of shape (1,3), total size 3\n  3, 4, 5", "Slice01");
-        Debug.Assert(t.Slice(0, 1, 2).ContentsAsString() == "Tensor of shape (2,3), total size 6\n  3, 4, 5\n  6, 7, 8", "Slice02");
-        Debug.Assert(t.Slice(1, 0, 2).ContentsAsString() == "Tensor of shape (3,2), total size 6\n  0, 1\n  3, 4\n  6, 7", "Slice03");
-        Debug.Assert(t.Slice(1, 0, 2).Slice(0, 1, 2).ContentsAsString() == "Tensor of shape (2,2), total size 4\n  3, 4\n  6, 7", "Slice04");
+        t.FillWithRange_();
+        Assert(t.Slice(0, 1, 1).ContentsAsString() == "  3, 4, 5", "Slice01");
+        Assert(t.Slice(0, 1, 2).ContentsAsString() == "  3, 4, 5\n  6, 7, 8", "Slice02");
+        Assert(t.Slice(1, 0, 2).ContentsAsString() == "  0, 1\n  3, 4\n  6, 7", "Slice03");
+        Assert(t.Slice(1, 0, 2).Slice(0, 1, 2).ContentsAsString() == "  3, 4\n  6, 7", "Slice04");
 
         TestCopyAndTranspose(t.Slice(0, 1, 1), "Slice05");
         TestCopyAndTranspose(t.Slice(1, 1, 1), "Slice06");
         TestCopyAndTranspose(t.Slice(1, 0, 2), "Slice07");
         TestCopyAndTranspose(t.Slice(1, 0, 2).Slice(0, 1, 2), "Slice08");
-
+        
         t = new Tensor(2, 1, 4, 1, 4);
-        t.FillWithCount_();
+        t.FillWithRange_();
         int[] squeezedAt1TestShape = {2, 4, 1, 4};
-        Debug.Assert(t.Squeeze(1).shape == squeezedAt1TestShape, "Squeeze01");
-        Debug.Assert(t.Squeeze(1).View(-1).InefficientEquals(t.View(-1)), "Squeeze02");
-        Debug.Assert(t.Squeeze(1).Unsqueeze(1).InefficientEquals(t), "Squeeze03");
-        Debug.Assert(t.Squeeze(1).Permute(1, 0, 3, 4).View(-1).InefficientEquals(t.Permute(2, 1, 0, 3, 4).View(-1)), "SqueezePermute01");
-        Debug.Assert(t.Squeeze(1).Permute(1, 0, 3, 4).InefficientEquals(t.Permute(2, 1, 0, 3, 4).Squeeze(1)), "SqueezePermute01");
-        Debug.Assert(t.Squeeze(1).Permute(1, 0, 3, 4).Unsqueeze(1).InefficientEquals(t.Permute(2, 1, 0, 3, 4)), "SqueezePermute01");
+        Assert(t.Squeeze(1).shape.SequenceEqual(squeezedAt1TestShape), "Squeeze01");
+        Assert(t.Squeeze(1).Reshape(-1).InefficientEquals(t.Reshape(-1)), "Squeeze02");
+        
+        Assert(t.Squeeze(1).Unsqueeze(1).InefficientEquals(t), "Squeeze03");
+        
+        Assert(t.Squeeze(1).Permute(1, 0, 2, 3).Reshape(-1).InefficientEquals(t.Permute(2, 1, 0, 3, 4).Reshape(-1)), "SqueezePermute01");
+        Assert(t.Squeeze(1).Permute(1, 0, 2, 3).InefficientEquals(t.Permute(2, 1, 0, 3, 4).Squeeze(1)), "SqueezePermute01");
+        Assert(t.Squeeze(1).Permute(1, 0, 2, 3).Unsqueeze(1).InefficientEquals(t.Permute(2, 1, 0, 3, 4)), "SqueezePermute01");
 
         TestCopyAndTranspose(t.Slice(0, 1, 1), "Slice09");
         TestCopyAndTranspose(t.Slice(2, 2, 1), "Slice10");
         TestCopyAndTranspose(t.Slice(4, 0, 2), "Slice11");
+        //*/
+        Console.WriteLine("Manual tests finished");
+        
+        // Test many variants of slice
+        t = new Tensor(60);
+        t.FillWithRange_();
+        
+        var count = 0;
+        var smallDivisorsOf60 = new int[] {1, 2, 3, 4, 5, 6};
+        for (int i1 = 2; i1 <= 6; i1++)
+        {
+            TestCopyAndFlatten(t.Reshape(i1, -1), $"ReshapeC ({i1}, -1)");
+            TestCopyAndFlatten(t.Reshape(-1, i1), $"ReshapeC (-1, {i1})");
+            TestCopyAndTranspose(t.Reshape(i1, -1), $"ReshapeT ({i1}, -1)");
+            TestCopyAndTranspose(t.Reshape(-1, i1), $"ReshapeT (-1, {i1})");
+            TestSliceAndTranspose(t.Reshape(i1, -1), $"ReshapeS ({i1}, -1)");
+            TestSliceAndTranspose(t.Reshape(-1, i1), $"ReshapeS (-1, {i1})");
+            count += 4;
+            for (int i2 = 2; i2 <= 6; i2++)
+            {
+                int missingDivisor = 60 / i1 / i2;
+                if (i1 * i2 * missingDivisor != 60)
+                    continue;
 
-        Console.WriteLine("Tests finished");
+                TestCopyAndFlatten(t.Reshape(i1, i2, -1), $"ReshapeC ({i1}, {i2}, -1)");
+                TestCopyAndFlatten(t.Reshape(i1, -1, i2), $"ReshapeC ({i1}, -1, {i2})");
+                TestCopyAndFlatten(t.Reshape(-1, i1, i2), $"ReshapeC (-1, {i1}, {i2})");
+                TestCopyAndTranspose(t.Reshape(i1, i2, -1), $"ReshapeT ({i1}, {i2}, -1)");
+                TestCopyAndTranspose(t.Reshape(i1, -1, i2), $"ReshapeT ({i1}, -1, {i2})");
+                TestCopyAndTranspose(t.Reshape(-1, i1, i2), $"ReshapeT (-1, {i1}, {i2})");
+                TestSliceAndTranspose(t.Reshape(i1, i2, -1), $"ReshapeS ({i1}, {i2}, -1)");
+                TestSliceAndTranspose(t.Reshape(i1, -1, i2), $"ReshapeS ({i1}, -1, {i2})");
+                TestSliceAndTranspose(t.Reshape(-1, i1, i2), $"ReshapeS (-1, {i1}, {i2})");
+                count += 6;
+            }
+        }
+        
+        Console.WriteLine($"{count} automated tests finished");//*/
     }
 
     static void TestCopyAndFlatten(Tensor t, string testId)
     {
-        var a = t.Copy().View(-1);
-        Debug.Assert(a.InefficientEquals(t.View(-1)), testId);
+        //Console.WriteLine("TestCopyAndFlatten "+testId);
+        //t.PrintImplementationDetails();
+        var a = t.Copy(false).Reshape(-1);
+        var b = t.Reshape(-1);
+        Assert(a.InefficientEquals(b), testId);
+        Assert(a.CloseTo(b), "CloseTo_" + testId);
     }
 
     static void TestCopyAndTranspose(Tensor t, string testId)
     {
-        var a = t.Copy().T();
-        Debug.Assert(a.InefficientEquals(t.T()), testId);
+        var a = t.Copy(false).T();
+        Assert(a.InefficientEquals(t.T()), testId);
+        Assert(a.CloseTo(t.T()), "CloseTo_" + testId);
+    }
+
+    static void TestSliceAndTranspose(Tensor t, string testId)
+    {
+        var a = t.Slice(t.rank - 1, 1, t.shape[t.rank - 1] - 1).T();
+        var b = t.T().Slice(t.rank - 2, 1, t.shape[t.rank - 1] - 1);
+        Assert(a.InefficientEquals(b), testId);
+        Assert(a.CloseTo(b), "CloseTo_" + testId);
+    }
+    
+    static void TestPermute(Tensor t)
+    {
+        var order = new int[t.rank];
+        for (var i = 0; i < order.Length; i++)
+            order[i] = i;
+        
+        foreach (var permutation in Permutate(order, order.Length))
+        {
+            
+        }
+    }
+    
+    static void Assert(bool condition, string message)
+    {
+        if (!condition)
+            Console.WriteLine("FAILED: " + message);
+    }
+    
+    static void Xor()
+    {
+        var input = new double[8] {0,0, 0,1, 1,0, 1,1};
+        var output = new double[4] {0, 1, 1, 0};
+        
     }
 }
