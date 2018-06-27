@@ -1,6 +1,20 @@
 A Tensor class intended to work somewhat like a cross between numpy and pytorch,
 with the goal of building and training neural networks.
 
+### Status
+
+It works. 
+
+The Xor function successfully learns to XOR two numbers taken from the set {0, 1}.
+It runs ~30% faster than a simple version written in Python with Numpy with the 
+derivatives hard-coded. It runs 2-3 times faster than a simple version written in
+PyTorch. I guess the problem is too small to profit from the advanced techniques 
+used in numpy and pytorch.
+
+However this version was developed very rapidly, without using the proper infrastructure 
+for tests. My current goal is to rewrite it in order to simplify some things and
+to improve others. I shall also use the proper infrastructure for testing.
+
 ### Copy on write
 
 Most of these methods return a new Tensor that, where possible, shares the 
