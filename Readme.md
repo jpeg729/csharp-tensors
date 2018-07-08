@@ -1,43 +1,53 @@
-A Tensor class intended to work somewhat like a cross between numpy and pytorch,
-with the goal of building and training neural networks.
+A Tensor class intended to work somewhat like a cross between numpy and pytorch.
+
+The goal is to use neural-nets in competitions on Codingame.com. Hence we need good 
+single-thread performance and small code-size (submissions are limited to 100k file 
+size) while still being fairly complete.
 
 ### Status
 
-It works. 
+Full rewrite in progress.
 
-The Xor function successfully learns to XOR two numbers taken from the set {0, 1}.
-It runs ~30% faster than a simple version written in Python with Numpy with the 
-derivatives hard-coded. It runs 2-3 times faster than a simple version written in
-PyTorch. I guess the problem is too small to profit from the advanced techniques 
-used in numpy and pytorch.
+The main change is to overhaul the indexing system. Padding has been built in, though
+the whether the resulting slowdown is acceptable remains to be tested.
 
-However this version was developed very rapidly, without using the proper infrastructure 
-for tests. My current goal is to rewrite it in order to simplify some things and
-to improve others. I shall also use the proper infrastructure for testing.
+* Contiguity tests - TODO
+* Tensor manipulation functions - almost done
+  - `MergeDimWithNext(Count)`
+  - `ReshapeDim(dim, newShape)`
+* Unless needed the following will be left out...
+  - `Reshape(arbitraryShape)`
+  - `Flatten()` - Slower alternative `tensor.Copy().MergeDimWithNext(tensor.rank - 1)`
+* Basic math - done
+* Conv1d - TODO
+  We don't really need 2d convs as a 2d conv can be separated into two 1d convs 1 x N then N x 1.
+  The resulting model uses fewer params, runs faster, and gives great results.
+* Tests - TODO
+
 
 ### Copy on write
 
-Most of these methods return a new Tensor that, where possible, shares the 
-underlying data array with the original Tensor.
+Modifying the data contained in a Tensor is avoided where possible in order to enable
+automatic differentiation. For efficiency, tensor manipulation operations generally 
+return a new Tensor that shares the same underlying data array as the original Tensor.
+
+By necessity, some methods do modify the data stored in the Tensor. These methods have
+names that end in an underscore, and all of them return `void` so they can't be chained.
 
 ### Tensor creation
 
 ```c#
-var tensor_of_zeros = new Tensor(dimensions, as, args, or, as, list);
+var tensorOfZeros = new Tensor(arrayOfDimSizes);
 
 double[] data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
-var tensor_of_data = new Tensor(data);
+var tensorOfData = new Tensor(data);
 ```
 
-If you need to create a tensor from data with a specified shape, then just `Reshape()` it.
+If you need to create a tensor from data with a specified shape, then just use `ReshapeDim(0, arrayOfDimSizes)`.
 
 ### Tensor filling
 
-These methods modify the underlying data array, which is against the copy-on-write 
-approach used by the rest of the library. The method names end with an underscore
-as a reminder of that fact. These methods will issue a warning in some circumstances.
-
-These methods return `void` and cannot be chained.
+These methods modify the underlying data array and will issue a warning in some circumstances.
 
 * `Fill_(value)`
 * `FillWithRange_(start, step)` fills the tensor with the numbers start, start + step, start + 2*step
@@ -47,10 +57,11 @@ These methods return `void` and cannot be chained.
 ### String representation and printing
 
 * `ToString()` returns a string containing tensor shape and size.
-* `PrintContents()` prints the _entire_ contents of the tensor to the console.
-* `PrintImplementationDetails()` prints the size of the tensor and its strides, etc.
-* `ContentsAsString()` returns the _entire_ contents of the tensor as a string
-  formatted in the same way `PrintContents()` would print it.
+
+Other methods are provided in the Utils class.
+
+* `PrintContents(tensor)` outputs the contents of the tensor to the console.
+* `ContentsToString(tensor)` returns a string representation of the entire tensor.
 
 ### Basic tensor operation methods
 
@@ -65,6 +76,7 @@ is shared with the new Tensor. This is similar to the concept of views in numpy.
 * `Squeeze(dim)` - removes the given dimension, if the length of that dimension is 1.
 * `Unsqueeze(dim)` - inserts a new dimension of length 1.
 * `Slice(dim, start, count)` - takes `count` elements from `start` along dimension `dim`.
+* `Pad(dim, left, right, type, value)` - adds padding to the given dimension.
 
 <details>
   <summary>Expand for examples</summary>
@@ -116,18 +128,10 @@ t1.Reshape(new_shape).PrintContents();
 
 ## Accessing data
 
-* `tensor[coords, of, element]` allows getting, but not setting the value of the
-  element at the specified coordinates.
-* `DangerouslyAccessData_()` returns a reference to the underlying data array,
-  use with caution.
+WIP
 
 ## Automatic differentiation
 
 All math operations should return a Tensor containing the result of the calculation
 with a Backwards delegate that calculates the gradient and calls Backwards on all 
 the tensors that were given as inputs to the operation.
-
-## TODO 
-
-* [ ] Add unit tests
-* [ ] Add math operations
