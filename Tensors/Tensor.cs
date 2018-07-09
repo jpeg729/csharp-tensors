@@ -27,7 +27,7 @@ namespace Tensors
 		}
 
 		private class Dimension {
-			public int size, stride, currentIndex, padLeft, padRight;
+			public int size, stride, index, padLeft, padRight;
 			public Padding padType;
 			public double padValue;
 		}
@@ -36,15 +36,33 @@ namespace Tensors
 		private bool _rented = true;
 		private int _start;
 		private int _offset;
-		private Dimension[] _shape;
+		private Dimension[] _dims;
 		private Stack<double> _paddingValues;
-		private int _dimUpdatedByAdvance;
 
-		public int[] shape { get { return _shape.Select(s => s.size).ToArray(); } }
-		public string shapeStr { get { return "(" + String.Join(",", _shape.Select(s => s.size)) + ")"; } }
-		public int size { get { return shape.Aggregate((a, x) => a * x); } }
-		public int rank { get { return _shape.Count(); } }
-		public int DimUpdatedByAdvance { get { return _dimUpdatedByAdvance; } }
+		private int[] _shape;
+		public int[] shape {
+			get {
+				if (_shape == null)
+					_shape = _dims.Select(s => s.size).ToArray();
+				return _shape;
+			}
+		}
+		public string shapeStr { get { return "(" + String.Join(",", _dims.Select(s => s.size)) + ")"; } }
+		public readonly int size;
+		public int rank { get { return _dims.Count(); } }
+		public int lastIndexUpdated {
+			get { return lastIndexUpdated; } 
+			private set { lastIndexUpdated = value; }
+		}
+		public int[] indices { get { return _dims.Select(s => s.index).ToArray(); } }
+		public double item {
+			get {
+				if (_paddingValues.Count() > 0)
+					return _paddingValues.Peek();
+				return _data[_offset];
+			}
+			private set { _data[_offset] = value; }
+		}
 
 		public Tensor grad;
 		public bool noGrad;
@@ -58,18 +76,20 @@ namespace Tensors
 
 		public Tensor(double[] data)
 		{
-			_shape = new Dimension[] { new Dimension{ size = data.Length } };
+			size = data.Length;
+			_dims = new Dimension[] { new Dimension{ size = size } };
 			_data = data;
 			_rented = false;
 		}
 
 		public Tensor(params int[] sizes)
 		{
-			_shape = new Dimension[sizes.Length];
+			size = sizes.Aggregate((a, x) => a * x);
+			_dims = new Dimension[sizes.Length];
 			var currStride = 1;
 			for (var i = 0; i < sizes.Length; i++)
 			{
-				_shape[i] = new Dimension{
+				_dims[i] = new Dimension{
 					size = sizes[i],
 					stride = sizes[i] > 1 ? currStride : 0,
 				};
@@ -79,10 +99,11 @@ namespace Tensors
 			// TODO TEST assert size == currStride
 		}
 
-		private Tensor(double[] data, Dimension[] shape, int start, Action<Tensor> Backpropagate, bool noGrad)
+		private Tensor(double[] data, Dimension[] dims, int start, Action<Tensor> Backpropagate, bool noGrad)
 		{
 			_data = data;
-			_shape = shape;
+			_dims = dims;
+			size = shape.Aggregate((a, x) => a * x);
 			_start = start;
 			this.Backpropagate = Backpropagate;
 			this.noGrad = noGrad;
@@ -91,55 +112,46 @@ namespace Tensors
 		public void ResetOffset()
 		{
 			_offset = _start;
-			for (var i = 0; i < _shape.Count(); i++)
-				_shape[i].currentIndex = 0;
+			for (var i = 0; i < _dims.Count(); i++)
+				_dims[i].index = 0;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public bool AdvanceOffset()
 		{
-			for (var i = _shape.Count() - 1; i >= 0; i--)
+			for (var i = _dims.Count() - 1; i >= 0; i--)
 			{
-				var dim = _shape[i];
-				dim.currentIndex += 1;
-				if (dim.currentIndex <= dim.padLeft)
+				var dim = _dims[i];
+				dim.index += 1;
+				if (dim.index <= dim.padLeft)
 				{
 					if (dim.padType == Padding.Const)
 						_paddingValues.Push(dim.padValue);
-					_dimUpdatedByAdvance = i;
+					lastIndexUpdated = i;
 					return true;
 				}
-				if (dim.currentIndex < dim.size - dim.padRight)
+				if (dim.index < dim.size - dim.padRight)
 				{
 					_offset += dim.stride;
 					if (dim.padType == Padding.Const)
 						_paddingValues.Pop();
-					_dimUpdatedByAdvance = i;
+					lastIndexUpdated = i;
 					return true;
 				}
-				if (dim.currentIndex < dim.size)
+				if (dim.index < dim.size)
 				{
 					if (dim.padType == Padding.Const)
 						_paddingValues.Push(dim.padValue);
-					_dimUpdatedByAdvance = i;
+					lastIndexUpdated = i;
 					return true;
 				}
 				if (dim.padType == Padding.Const)
 					_paddingValues.Pop();
 				_offset -= (dim.size - 1) * dim.stride;
-				dim.currentIndex = 0;
+				dim.index = 0;
 			}
-			_dimUpdatedByAdvance = -1;
+			lastIndexUpdated = -1;
 			return false;
-		}
-
-		public double item {
-			get {
-				if (_paddingValues.Count() > 0)
-					return _paddingValues.Peek();
-				return _data[_offset];
-			}
-			private set { _data[_offset] = value; }
 		}
 
 		public bool CloseTo(Tensor other, double tolerance = 1e-8)
@@ -167,6 +179,11 @@ namespace Tensors
 			ResetOffset();
 			do { item = start; start += step; }
 			while (AdvanceOffset());
+		}
+
+		public void FillEye_()
+		{
+			// TODO
 		}
 
 		public void FillUniform_(double minval = 0, double maxval = 1)
@@ -208,54 +225,23 @@ namespace Tensors
 		{
 			// Choosing fan_in preserves the magnitude of the variance of the weights in the forward pass. 
 			// Choosing fan_out preserves the magnitudes in the backwards pass.
-			/**
-			* TODO Compare to https://pytorch.org/docs/stable/nn.html#torch.nn.init.calculate_gain
-			*   relu -> gain = sqrt_2
-			*   tanh -> gain = 5/3
-			*   lrelu -> gain = sqrt(2 / (1 + neg_slope_squared))
-			*   identity, Conv, Sigmoid -> gain = 1
-			*/
 			double gain = 1;
 			if (activation == Activation.ReLU)
 				gain = Math.Sqrt(2 / (1 + activationParam));
 			else if (activation == Activation.Tanh)
-				gain = 5 / 3;
-
-			double limitOrStd = 1;
+				gain = 1.1;
 
 			if (dist == Distribution.Uniform)
 			{
-				if (activation == Activation.Linear || activation == Activation.Tanh)
-				{
-					limitOrStd = Math.Sqrt(3.0 / fan);
-				}
-				else if (activation == Activation.Sigmoid)
-				{
-					limitOrStd = 4 * Math.Sqrt(3.0 / fan);
-				}
-				else if (activation == Activation.ReLU)
-				{
-					limitOrStd = Math.Sqrt(6.0 / fan);
-				}
-				Console.WriteLine($"InitialiseWeights using limit {limitOrStd}");
-				FillUniform_(-limitOrStd, limitOrStd);
+				var limit = Math.Sqrt(3.0 / fan);
+				Console.WriteLine($"InitialiseWeights using limit {limit}");
+				FillUniform_(-limit, limit);
 			}
 			else if (dist == Distribution.Normal)
 			{
-				if (activation == Activation.Linear || activation == Activation.Tanh)
-				{
-					limitOrStd = Math.Sqrt(1.0 / fan);
-				}
-				else if (activation == Activation.Sigmoid)
-				{
-					limitOrStd = 4 * Math.Sqrt(1.0 / fan);
-				}
-				else if (activation == Activation.ReLU)
-				{
-					limitOrStd = Math.Sqrt(2.0 / fan);
-				}
-				Console.WriteLine($"InitialiseWeights using std {limitOrStd}");
-				FillNormal_(0, limitOrStd);
+				var std = Math.Sqrt(1.0 / fan);
+				Console.WriteLine($"InitialiseWeights using std {std}");
+				FillNormal_(0, std);
 			}
 		}
 
@@ -317,7 +303,7 @@ namespace Tensors
 
 		public Tensor Detach()
 		{
-			return new Tensor(_data, _shape, _start, null, noGrad);
+			return new Tensor(_data, _dims, _start, null, noGrad);
 		}
 
 		public static void Broadcast(Tensor inA, Tensor inB, ref Tensor outA, ref Tensor outB)
@@ -334,31 +320,31 @@ namespace Tensors
 				var idxB = i - broadcastRank + inB.rank;
 				if (i < broadcastRank - inA.rank)
 				{
-					newShapeA[i] = new Dimension{ size = inB._shape[idxB].size };
-					newShapeB[i] = inB._shape[idxB];
+					newShapeA[i] = new Dimension{ size = inB._dims[idxB].size };
+					newShapeB[i] = inB._dims[idxB];
 					broadcastDimsA.Add(i);
 				}
 				else if (i < broadcastRank - inB.rank)
 				{
-					newShapeA[i] = inA._shape[idxA];
-					newShapeB[i] = new Dimension{ size = inA._shape[idxA].size };
+					newShapeA[i] = inA._dims[idxA];
+					newShapeB[i] = new Dimension{ size = inA._dims[idxA].size };
 					broadcastDimsB.Add(i);
 				}
-				else if (inA._shape[idxA].size == inB._shape[idxB].size)
+				else if (inA._dims[idxA].size == inB._dims[idxB].size)
 				{
-					newShapeA[i] = inA._shape[idxA];
-					newShapeB[i] = inB._shape[idxB];
+					newShapeA[i] = inA._dims[idxA];
+					newShapeB[i] = inB._dims[idxB];
 				}
-				else if (inA._shape[idxA].size == 1)
+				else if (inA._dims[idxA].size == 1)
 				{
-					newShapeA[i] = new Dimension{ size = inB._shape[idxB].size };
-					newShapeB[i] = inB._shape[idxB];
+					newShapeA[i] = new Dimension{ size = inB._dims[idxB].size };
+					newShapeB[i] = inB._dims[idxB];
 					broadcastDimsA.Add(i);
 				}
-				else if (inB._shape[idxB].size == 1)
+				else if (inB._dims[idxB].size == 1)
 				{
-					newShapeA[i] = inA._shape[idxA];
-					newShapeB[i] = new Dimension{ size = inA._shape[idxA].size };
+					newShapeA[i] = inA._dims[idxA];
+					newShapeB[i] = new Dimension{ size = inA._dims[idxA].size };
 					broadcastDimsB.Add(i);
 				}
 				else
@@ -416,8 +402,8 @@ namespace Tensors
 			var newShape = new Dimension[rank];
 			for (var i = 0; i < rank; i++)
 				newShape[i] = new Dimension{
-					size = _shape[order[i]].size,
-					stride = _shape[order[i]].stride,
+					size = _dims[order[i]].size,
+					stride = _dims[order[i]].stride,
 				};
 			
 			Action<Tensor> permuteGrads = null;
@@ -442,15 +428,15 @@ namespace Tensors
 
 		public Tensor Squeeze(int dim)
 		{
-			if (_shape[dim].size > 1)
+			if (_dims[dim].size > 1)
 				throw new ArgumentException($"Cannot squeeze dim {dim} in shape {shapeStr}");
 
 			var newShape = new Dimension[rank - 1];
 			for (var i = 0; i < rank; i++)
 				if (i != dim)
 					newShape[i < dim ? i : i - 1] = new Dimension{
-						size = _shape[i].size,
-						stride = _shape[i].stride,
+						size = _dims[i].size,
+						stride = _dims[i].stride,
 					};
 			
 			Action<Tensor> unsqueezeGrads = null;
@@ -469,8 +455,8 @@ namespace Tensors
 			newShape[dim] = new Dimension{ size = newSize };
 			for (var i = 0; i < rank; i++)
 				newShape[i < dim ? i : i + 1] = new Dimension{
-					size = _shape[i].size,
-					stride = _shape[i].stride,
+					size = _dims[i].size,
+					stride = _dims[i].stride,
 				};
 
 			Action<Tensor> squeezeGrads = null;
@@ -482,20 +468,20 @@ namespace Tensors
 
 		public Tensor Slice(int dim, int start, int length = 1)
 		{
-			if (start + length > shape[dim])
+			if (start + length > _dims[dim].size)
 				throw new ArgumentException($"Slice({dim}, {start}, {length}) incompatible with shape {shapeStr}");
 
-			var newStart = _start + start * _shape[dim].stride;
+			var newStart = _start + start * _dims[dim].stride;
 			var newShape = new Dimension[rank];
-			_shape.CopyTo(newShape, 0);
+			_dims.CopyTo(newShape, 0);
 			newShape[dim] = new Dimension{
 				size = length,
-				stride = _shape[dim].stride,
+				stride = _dims[dim].stride,
 			};
 			
 			Action<Tensor> padGrads = null;
 			if (Backpropagate != null)
-				padGrads = grad => Backpropagate(grad.Pad(dim, start - 1, shape[dim] - start - length, Padding.Const));
+				padGrads = grad => Backpropagate(grad.Pad(dim, start - 1, _dims[dim].size - start - length, Padding.Const));
 			
 			return new Tensor(_data, newShape, newStart, padGrads, noGrad);
 		}
@@ -506,10 +492,10 @@ namespace Tensors
 				throw new ArgumentException($"Can't pad dimension {dim} in shape {shapeStr}");
 			
 			var newShape = new Dimension[rank];
-			_shape.CopyTo(newShape, 0);
+			_dims.CopyTo(newShape, 0);
 			newShape[dim] = new Dimension{
-				size = _shape[dim].size + left + right,
-				stride = _shape[dim].stride,
+				size = _dims[dim].size + left + right,
+				stride = _dims[dim].stride,
 				padLeft = left,
 				padRight = right,
 				padType = type,
@@ -518,7 +504,7 @@ namespace Tensors
 
 			Action<Tensor> sliceGrads = null;
 			if (Backpropagate != null)
-				sliceGrads = grad => Backpropagate(grad.Slice(dim, left, _shape[dim].size));
+				sliceGrads = grad => Backpropagate(grad.Slice(dim, left, _dims[dim].size));
 
 			return new Tensor(_data, newShape, _start, sliceGrads, noGrad);
 		}
@@ -640,31 +626,31 @@ namespace Tensors
 			for (var i = 0; i < rank - 1; i++)
 			{
 				order[i] = (i < dim ? i : i + 1);
-				newShape[i] = _shape[i < dim ? i : i + 1].size;
+				newShape[i] = _dims[i < dim ? i : i + 1].size;
 			}
 			order[rank - 1] = dim;
 			var permuted = Permute(order);
 			var output = new Tensor(newShape);
-			var lastDimUpdated = -1;
+			var lastIndexUpdated = -1;
 			do
 			{
-				if (lastDimUpdated == rank - 1)
+				if (lastIndexUpdated == rank - 1)
 				{
 					output.item += permuted.item;
 				}
 				else
 				{
-					output.item /= _shape[dim].size;
+					output.item /= _dims[dim].size;
 					output.AdvanceOffset();
 					output.item = permuted.item;
 				}
 			} while (permuted.AdvanceOffset());
 
-			output.item /= _shape[dim].size;
+			output.item /= _dims[dim].size;
 
 			if (Backpropagate != null)
 				output.Backpropagate = grad =>
-					Backpropagate(grad.Unsqueeze(dim, shape[dim]));
+					Backpropagate(grad.Unsqueeze(dim, _dims[dim].size));
 			return output;
 		}
 
@@ -679,15 +665,15 @@ namespace Tensors
 			var newShape = a.shape.Take(a.rank - 1).ToArray();
 			newShape[a.rank - 2] = b.shape[b.rank - 2];
 			var output = new Tensor(newShape);
-			var lastDimUpdated = -1;
+			var lastIndexUpdated = -1;
 			do
 			{
-				if (lastDimUpdated == a.rank - 1)
+				if (lastIndexUpdated == a.rank - 1)
 					output.AdvanceOffset();
 				output.item += a.item * b.item;
 				a.AdvanceOffset();
-				lastDimUpdated = a.DimUpdatedByAdvance;
-			} while (lastDimUpdated >= 0 && b.AdvanceOffset());
+				lastIndexUpdated = a.lastIndexUpdated;
+			} while (lastIndexUpdated >= 0 && b.AdvanceOffset());
 
 			output.Backpropagate = grad => {
 				if (Backpropagate != null)

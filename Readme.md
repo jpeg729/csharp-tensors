@@ -15,9 +15,12 @@ the whether the resulting slowdown is acceptable remains to be tested.
 * Tensor manipulation functions - almost done
   - `MergeDimWithNext(Count)`
   - `ReshapeDim(dim, newShape)`
-* Unless needed the following will be left out...
-  - `Reshape(arbitraryShape)`
-  - `Flatten()` - Slower alternative `tensor.Copy().MergeDimWithNext(tensor.rank - 1)`
+  * Unless needed the following will be left out...
+    - `Reshape(arbitraryShape)`
+    - `Flatten()` - Slower alternative `tensor.Copy().MergeDimWithNext(tensor.rank - 1)`
+  * Maybe add
+    - `Stack(dim, tensor1, tensor2, ...)`
+    - `Split(dim, size)`
 * Basic math - done
 * Conv1d - TODO
   We don't really need 2d convs as a 2d conv can be separated into two 1d convs 1 x N then N x 1.

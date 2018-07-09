@@ -22,18 +22,18 @@ namespace Tensors
             t.ResetOffset();
             var output = new StringBuilder(t.size * 10);
             var indices = new int[t.rank];
-            var lastDimUpdated = t.rank - 3;
-            var prevDimUpdated = lastDimUpdated;
+            var lastIndexUpdated = t.rank - 3;
+            var prevIndexUpdated = lastIndexUpdated;
             do
             {
-                if (lastDimUpdated <= t.rank - 3)
+                if (lastIndexUpdated <= t.rank - 3)
                 {
                     if (t.rank > 2)
                         output.Append($"{String.Join(",", indices.Take(t.rank - 2))}:\n");
                     
                     output.Append("  ");
                 }
-                if (lastDimUpdated == t.rank - 2)
+                if (lastIndexUpdated == t.rank - 2)
                     output.Append("\n  ");
 
                 // A float32 has an 8-bit exponent and a 23-bit mantissa
@@ -45,21 +45,21 @@ namespace Tensors
                 // So 5 digits of precision should be enough for us.
                 output.Append(t.item.ToString("g5", CultureInfo.InvariantCulture));
 
-                indices[lastDimUpdated] += 1;
-                if (prevDimUpdated != lastDimUpdated)
+                indices[lastIndexUpdated] += 1;
+                if (prevIndexUpdated != lastIndexUpdated)
                 {
-                    for (var i = lastDimUpdated + 1; i <= prevDimUpdated; i++)
+                    for (var i = lastIndexUpdated + 1; i <= prevIndexUpdated; i++)
                         indices[i] = 0;
                     
-                    prevDimUpdated = lastDimUpdated;
+                    prevIndexUpdated = lastIndexUpdated;
                 }
                 t.AdvanceOffset();
-                lastDimUpdated = t.DimUpdatedByAdvance;
+                lastIndexUpdated = t.lastIndexUpdated;
 
-                if (lastDimUpdated == t.rank - 1 && lastDimUpdated == prevDimUpdated)
+                if (lastIndexUpdated == t.rank - 1 && lastIndexUpdated == prevIndexUpdated)
                     output.Append(", ");
                 
-            } while (lastDimUpdated >= 0);
+            } while (lastIndexUpdated >= 0);
 
             return output.ToString();
         }
