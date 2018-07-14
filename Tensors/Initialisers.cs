@@ -10,7 +10,7 @@ namespace Tensors
 {
     public static class Initialisers
     {
-		public static void FillWithRange_(Tensor t, double start = 0, double step = 1)
+		public static void FillWithRange_(this Tensor t, double start = 0, double step = 1)
 		{
 			t.WarnAboutInplaceModification();
 			t.ResetOffset();
@@ -18,12 +18,12 @@ namespace Tensors
 			while (t.AdvanceOffset());
 		}
 
-		public static void FillEye_(Tensor t, int dim1, int dim2)
+		public static void FillEye_(this Tensor t, int dim1, int dim2)
 		{
 			// TODO
 		}
 
-		public static void FillUniform_(Tensor t, double minval = 0, double maxval = 1)
+		public static void FillUniform_(this Tensor t, double minval = 0, double maxval = 1)
 		{
 			t.WarnAboutInplaceModification();
 			t.ResetOffset();
@@ -31,7 +31,7 @@ namespace Tensors
 			while (t.AdvanceOffset());
 		}
 
-		public static void FillNormal_(Tensor t, double mean = 0, double std = 1)
+		public static void FillNormal_(this Tensor t, double mean = 0, double std = 1)
 		{
 			t.WarnAboutInplaceModification();
 
@@ -58,7 +58,7 @@ namespace Tensors
 			} while (t.AdvanceOffset());
 		}
 
-		public static void InitialiseWeights_(Tensor t, Distribution dist, Activation activation, int fan, double activationParam = 0)
+		public static void InitialiseWeights_(this Tensor t, Distribution dist, Activation activation, int fan, double activationParam = 0)
 		{
 			// Choosing fan_in preserves the magnitude of the variance of the weights in the forward pass. 
 			// Choosing fan_out preserves the magnitudes in the backwards pass.
@@ -72,13 +72,13 @@ namespace Tensors
 			{
 				var limit = Math.Sqrt(3.0 / fan);
 				Console.WriteLine($"InitialiseWeights using limit {limit}");
-				FillUniform_(t, -limit, limit);
+				t.FillUniform_(-limit, limit);
 			}
 			else if (dist == Distribution.Normal)
 			{
 				var std = Math.Sqrt(1.0 / fan);
 				Console.WriteLine($"InitialiseWeights using std {std}");
-				FillNormal_(t, 0, std);
+				t.FillNormal_(0, std);
 			}
 		}
     }

@@ -9,12 +9,12 @@ namespace MnistExample
         {
             Console.WriteLine("Hello World!");
             Tensor.Seed(0);
-            var t = new Tensor(new int[] {200,400,5,3});
-            Initialisers.FillWithRange_(t);
-            // Utils.PrintContents(t);
+            var t = new Tensor(new int[] {20,40,5,3});
+            t.FillWithRange_();
+            // t.PrintContents();
             //t = t.Pad(0, 2, 0, Padding.Const);
             //Console.WriteLine("Padding done!");
-            Utils.PrintContents(t);
+            t.PrintContents();
         }
     }
 }

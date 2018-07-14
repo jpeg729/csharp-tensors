@@ -11,13 +11,13 @@ namespace Tensors
     
     public static class Utils
     {
-        public static void PrintContents(Tensor t)
+        public static void PrintContents(this Tensor t)
         {
             Console.Error.WriteLine(t);
             Console.Error.WriteLine(ContentsToString(t));
         }
 
-        public static string ContentsToString(Tensor t)
+        public static string ContentsToString(this Tensor t)
         {
             t.ResetOffset();
             var output = new StringBuilder(t.size * 10);
