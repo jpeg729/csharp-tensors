@@ -602,6 +602,23 @@ namespace Tensors
             return output;
         }
 
+        public Tensor Mean()
+        {
+            var output = new Tensor(1);
+            foreach (var v in this)
+                output.Current += v;
+            Console.WriteLine($"Sum {output.Current}");
+            output.Current /= size;
+
+            if (Backpropagate != null)
+                output.Backpropagate = grad => {
+                    for (var dim = 0; dim < rank; dim++)
+                        grad = grad.Unsqueeze(dim, _dims[dim].size);
+                    Backpropagate(grad);
+                };
+            return output;
+        }
+
         public Tensor MatrixMultiply(Tensor other)
         {
             var otherT = other.T();
