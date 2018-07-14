@@ -9,7 +9,7 @@ namespace MnistExample
         {
             Console.WriteLine("Hello World!");
             Tensor.Seed(0);
-            var t = new Tensor(new int[] {2,4,5,3});
+            var t = new Tensor(new int[] { 2, 4, 5, 3 });
             t.FillWithRange_();
             // t.PrintContents();
             //t = t.Pad(0, 2, 0, Padding.Const);

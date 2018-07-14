@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 
 namespace Tensors
 {
-    
+
     public static class Utils
     {
         public static void PrintContents(this Tensor t)
@@ -21,16 +21,13 @@ namespace Tensors
         {
             t.Reset();
             var output = new StringBuilder(t.size * 10);
-            while (t.MoveNext())
-            {
+            while (t.MoveNext()) {
                 if (t.lastIndexUpdated == t.rank - 1)
                     output.Append(", ");
                 else if (t.lastIndexUpdated == t.rank - 2)
                     output.Append("\n  ");
-                else if (t.lastIndexUpdated <= t.rank - 3)
-                {
-                    if (t.rank > 2)
-                    {
+                else if (t.lastIndexUpdated <= t.rank - 3) {
+                    if (t.rank > 2) {
                         if (output.Length > 0)
                             output.Append("\n");
                         output.Append($"{String.Join(",", t.indices.Take(t.rank - 2))}:\n");
