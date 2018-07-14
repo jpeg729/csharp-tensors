@@ -17,11 +17,6 @@ namespace Tensors
         static Tensor() => _rng = new Random();
         public static void Seed(Int32 seed) { _rng = new Random(seed); }
 
-        private static double[] MakeDataArray(int size)
-        {
-            return new double[size];
-        }
-
         private class Dimension
         {
             public int size, stride, index, padLeft, padRight;
@@ -30,7 +25,6 @@ namespace Tensors
         }
 
         private double[] _data;
-        private bool _rented = true;
         private readonly int _start;
         private int _offset;
         private readonly Dimension[] _dims;
@@ -78,7 +72,6 @@ namespace Tensors
             size = data.Length;
             _dims = new Dimension[] { new Dimension { size = size } };
             _data = data;
-            _rented = false;
             Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
             Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
         }
@@ -96,7 +89,7 @@ namespace Tensors
                     stride = sizes[i] > 1 ? currStride : 0,
                 };
             }
-            _data = MakeDataArray(size);
+            _data = new double[size];
             Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
             Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
             // TODO TEST assert size == currStride
