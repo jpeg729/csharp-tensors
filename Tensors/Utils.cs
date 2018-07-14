@@ -30,9 +30,11 @@ namespace Tensors
             var output = new StringBuilder(t.size * 10);
             while (t.MoveNext()) {
                 if (t.lastIndexUpdated == t.rank - 1) {
-                    output.Append(comma);
+                    if (t.rank > 1 || t.indices[0] > 0)
+                        output.Append(comma);
                 } else if (t.lastIndexUpdated == t.rank - 2) {
-                    output.Append(newline);
+                    if (t.rank > 2 || t.indices[0] > 0)
+                        output.Append(newline);
                     output.Append(spacing);
                 } else if (t.lastIndexUpdated <= t.rank - 3) {
                     if (t.rank > 2) {

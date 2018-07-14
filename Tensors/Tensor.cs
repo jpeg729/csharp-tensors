@@ -73,7 +73,7 @@ namespace Tensors
         public Tensor(double[] data)
         {
             size = data.Length;
-            _dims = new Dimension[] { new Dimension { size = size } };
+            _dims = new Dimension[] { new Dimension { size = size, stride = 1 } };
             _data = data;
             if (debugGC) {
                 Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
