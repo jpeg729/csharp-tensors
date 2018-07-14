@@ -115,8 +115,10 @@ namespace Tensors
                     break;
                 }
             }
-            Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
-            Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
+            if (debugGC) {
+                Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+                Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
+            }
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -355,7 +357,7 @@ namespace Tensors
             return new Tensor(_data, newShape, _start, permuteGrads, noGrad);
         }
 
-        public int[] UnPermuteOrder(params int[] order)
+        public static int[] UnPermuteOrder(params int[] order)
         {
             var output = new int[order.Length];
             for (var i = 0; i < order.Length; i++)
@@ -607,7 +609,6 @@ namespace Tensors
             var output = new Tensor(1);
             foreach (var v in this)
                 output.Current += v;
-            Console.WriteLine($"Sum {output.Current}");
             output.Current /= size;
 
             if (Backpropagate != null)
