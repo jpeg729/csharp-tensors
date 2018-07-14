@@ -19,11 +19,15 @@ namespace Tensors
 
         public static string ContentsToString(this Tensor t)
         {
-            t.ResetOffset();
+            t.Reset();
             var output = new StringBuilder(t.size * 10);
-            while (true)
+            while (t.MoveNext())
             {
-                if (t.lastIndexUpdated <= t.rank - 3)
+                if (t.lastIndexUpdated == t.rank - 1)
+                    output.Append(", ");
+                else if (t.lastIndexUpdated == t.rank - 2)
+                    output.Append("\n  ");
+                else if (t.lastIndexUpdated <= t.rank - 3)
                 {
                     if (t.rank > 2)
                     {
@@ -33,8 +37,6 @@ namespace Tensors
                     }
                     output.Append("  ");
                 }
-                if (t.lastIndexUpdated == t.rank - 2)
-                    output.Append("\n  ");
 
                 // A float32 has an 8-bit exponent and a 23-bit mantissa
                 // C# recommends 17 bits of precision for perfect conversion of doubles
@@ -43,22 +45,7 @@ namespace Tensors
                 // Their bfloat16 format has an 8-bit exponent and a 7-bit mantissa,
                 // this requires only ~3 digits of precision.
                 // So 5 digits of precision should be enough for us.
-                output.Append(t.item.ToString("g5", CultureInfo.InvariantCulture));
-
-                try
-                {
-                    if (!t.AdvanceOffset())
-                        break;
-                }
-                catch
-                {
-                    Console.WriteLine(output);
-                    Console.WriteLine(Environment.StackTrace);
-                    return "Error while reading contents";
-                }
-
-                if (t.lastIndexUpdated == t.rank - 1)
-                    output.Append(", ");
+                output.Append(t.Current.ToString("g5", CultureInfo.InvariantCulture));
             }
 
             return output.ToString();

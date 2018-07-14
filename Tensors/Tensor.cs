@@ -11,7 +11,7 @@ namespace Tensors
 	public enum Distribution {Uniform, Normal};
 	public enum Activation {Linear, ReLU, Sigmoid, Tanh};
 
-	public class Tensor
+	public class Tensor : IEnumerable<double>, IEnumerator<double>
 	{
 		internal static System.Random _rng;
 		static Tensor() =>  _rng = new Random();
@@ -39,22 +39,26 @@ namespace Tensors
 		public int[] shape => _shape ?? (_shape = _dims.Select(s => s.size).ToArray());
 		public string shapeStr => "(" + String.Join(",", shape) + ")";
 		public readonly int size;
-		public int rank => _dims.Count();
+		public int rank => _dims.Length;
 		private int _lastIndexUpdated;
 		public int lastIndexUpdated {
 			get { return _lastIndexUpdated; } 
 			private set { _lastIndexUpdated = value; }
 		}
 		public int[] indices => _dims.Select(s => s.index).ToArray();
-		public double item {
+		public double Current {
+			[MethodImpl(MethodImplOptions.AggressiveInlining)]
 			get { return _paddingValues?.Count() > 0 ? _paddingValues.Peek() : _data[_offset]; }
+			[MethodImpl(MethodImplOptions.AggressiveInlining)]
 			private set { _data[_offset] = value; }
 		}
-		public void SetItem(double value)
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public void SetCurrent(double value)
 		{
 			WarnAboutInplaceModification();
-			item = value;
+			Current = value;
 		}
+		public static bool debugEnumeration = false;
 
 		public Tensor grad;
 		public bool noGrad;
@@ -66,7 +70,9 @@ namespace Tensors
 			set { _Backpropagate = noGrad ? (Action<Tensor>)null : value; }
 		}
 
-		public Tensor(double[] data)
+        object IEnumerator.Current => double.MinValue;//Test to see whether this one is ever used
+
+        public Tensor(double[] data)
 		{
 			size = data.Length;
 			_dims = new Dimension[] { new Dimension{ size = size } };
@@ -115,22 +121,29 @@ namespace Tensors
 			Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
 		}
 
-		public void ResetOffset(bool debug = false)
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        public IEnumerator<double> GetEnumerator()
+        {
+            Reset();
+			return this;
+        }
+
+		public void Reset()
 		{
 			_paddingValues?.Clear();
-			if (debug) Console.Write($"ResetOffset");
+			if (debugEnumeration) Console.Write($"ResetOffset");
 			_offset = _start;
-			for (var i = 0; i < _dims.Count(); i++)
+			for (var i = 0; i < _dims.Length; i++)
 			{
 				_dims[i].index = 0;
 				if (_dims[i].padLeft > 0 && _dims[i].padType == Padding.Const)
 				{
-					if (debug) Console.Write($" padLeft[{i}] with {_dims[i].padValue}");
+					if (debugEnumeration) Console.Write($" padLeft[{i}] with {_dims[i].padValue}");
 					_paddingValues.Push(_dims[i].padValue);
 				}
 			}
-			lastIndexUpdated = 0;
-			if (debug)
+			_dims[_dims.Length - 1].index = -1;
+			if (debugEnumeration)
 			{
 				var paddingValues = $"[{String.Join(",", (_paddingValues ?? new Stack<double>()))}]";
 				Console.WriteLine($" {paddingValues}");
@@ -138,22 +151,28 @@ namespace Tensors
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		public bool AdvanceOffset(bool debug = false)
+		public bool MoveNext()
 		{
-			if (debug)
+			if (debugEnumeration)
 			{	
 				string paddingValues = $"[{String.Join(",", (_paddingValues ?? new Stack<double>()))}]";
 				Console.Write($"AdvanceOffset {String.Join(",", indices)} {paddingValues}");
 			}
-			for (var i = _dims.Count() - 1; i >= 0; i--)
+			for (var i = _dims.Length - 1; i >= 0; i--)
 			{
 				var dim = _dims[i];
 				dim.index += 1;
-				if (debug) Console.Write($" {i}->{dim.index}");
-				if (dim.index < dim.padLeft)
+				if (debugEnumeration) Console.Write($" {i}->{dim.index}");
+				if (dim.index == 0)
+				{
+					lastIndexUpdated = 0;
+					if (debugEnumeration) Console.WriteLine($" starting at {_offset}");
+					return true;
+				}
+				else if (dim.index < dim.padLeft)
 				{
 					lastIndexUpdated = i;
-					if (debug) Console.WriteLine($" paddingLeft {_offset}");
+					if (debugEnumeration) Console.WriteLine($" paddingLeft {_offset}");
 					return true;
 				}
 				else if (dim.index == dim.padLeft)
@@ -161,14 +180,14 @@ namespace Tensors
 					if (dim.padType == Padding.Const)
 						_paddingValues.Pop();
 					lastIndexUpdated = i;
-					if (debug) Console.WriteLine($" contents {_offset}");
+					if (debugEnumeration) Console.WriteLine($" contents {_offset}");
 					return true;
 				}
 				else if (dim.index < dim.size - dim.padRight)
 				{
 					_offset += dim.stride;
 					lastIndexUpdated = i;
-					if (debug) Console.WriteLine($" contents {_offset}");
+					if (debugEnumeration) Console.WriteLine($" contents {_offset}");
 					return true;
 				}
 				else if (dim.padRight > 0 && dim.index == dim.size - dim.padRight)
@@ -176,13 +195,13 @@ namespace Tensors
 					if (dim.padType == Padding.Const)
 						_paddingValues.Push(dim.padValue);
 					lastIndexUpdated = i;
-					if (debug) Console.WriteLine($" paddingRight {_offset}");
+					if (debugEnumeration) Console.WriteLine($" paddingRight {_offset}");
 					return true;
 				}
 				else if (dim.index < dim.size)
 				{
 					lastIndexUpdated = i;
-					if (debug) Console.WriteLine($" paddingRight {_offset}");
+					if (debugEnumeration) Console.WriteLine($" paddingRight {_offset}");
 					return true;
 				}
 
@@ -195,10 +214,10 @@ namespace Tensors
 				}
 				_offset -= (dim.size - dim.padLeft - dim.padRight - 1) * dim.stride;
 				dim.index = 0;
-				Console.Write($"->{dim.index}");
+				if (debugEnumeration) Console.Write($"->{dim.index}");
 			}
 			lastIndexUpdated = -1;
-			if (debug) Console.WriteLine($" done {_offset}");
+			if (debugEnumeration) Console.WriteLine($" done {_offset}");
 			return false;
 		}
 
@@ -207,26 +226,20 @@ namespace Tensors
 			if (!shape.SequenceEqual(other.shape))
 				throw new ArgumentException($"Attempt to compare incompatible tensors {shapeStr} != {other.shapeStr}");
 
-			ResetOffset();
-			other.ResetOffset();
-			do { if (Math.Abs(item - other.item) > tolerance) return false; }
-			while (AdvanceOffset() && other.AdvanceOffset());
+			Reset();
+			other.Reset();
+			while (MoveNext() && other.MoveNext())
+			{
+				if (Math.Abs(Current - other.Current) > tolerance) return false;
+			}
 			return true;
 		}
 
 		public void Fill_(double value)
 		{
 			WarnAboutInplaceModification();
-			ResetOffset();
-			do { item = value; } while (AdvanceOffset());
-		}
-
-		public void FillWithRange_(double start = 0, double step = 1)
-		{
-			WarnAboutInplaceModification();
-			ResetOffset();
-			do { item = start; start += step; }
-			while (AdvanceOffset());
+			Reset();
+			while (MoveNext()) { Current = value; }
 		}
 
 		public override string ToString() => $"Tensor of shape {shapeStr}";
@@ -349,9 +362,8 @@ namespace Tensors
 		public Tensor Copy()
 		{
 			var output = new Tensor(shape);
-			ResetOffset();
-			do { output.item = item; }
-			while (AdvanceOffset() && output.AdvanceOffset());
+			Reset();
+			while (MoveNext() && output.MoveNext()) { output.Current = Current; }
 			return output;
 		}
 
@@ -495,9 +507,8 @@ namespace Tensors
 		{
 			var output = new Tensor(a.shape);
 			output.noGrad = a.noGrad;
-			a.ResetOffset();
-			do { output.item = calcFn(a.item); }
-			while (output.AdvanceOffset() && a.AdvanceOffset());
+			a.Reset();
+			while (output.MoveNext() && a.MoveNext()) { output.Current = calcFn(a.Current); }
 			return output;
 		}
 
@@ -506,10 +517,9 @@ namespace Tensors
 			var output = new Tensor(a.shape);
 			output.noGrad = a.noGrad || b.noGrad;
 			Broadcast(a, b, out Tensor c, out Tensor d);
-			c.ResetOffset();
-			d.ResetOffset();
-			do { output.item = calcFn(c.item, d.item); }
-			while (output.AdvanceOffset() && c.AdvanceOffset() && d.AdvanceOffset());
+			c.Reset();
+			d.Reset();
+			while (output.MoveNext() && c.MoveNext() && d.MoveNext()) { output.Current = calcFn(c.Current, d.Current); }
 			return output;
 		}
 
@@ -517,10 +527,12 @@ namespace Tensors
 		{
 			var output = new Tensor(a.shape);
 			output.noGrad = a.noGrad || b.noGrad || c.noGrad;
-			a.ResetOffset();
-			b.ResetOffset();
-			do { output.item = calcFn(a.item, b.item, c.item); }
-			while (output.AdvanceOffset() && a.AdvanceOffset() && b.AdvanceOffset() && c.AdvanceOffset());
+			a.Reset();
+			b.Reset();
+			while (output.MoveNext() && a.MoveNext() && b.MoveNext() && c.MoveNext())
+			{
+				output.Current = calcFn(a.Current, b.Current, c.Current);
+			}
 			return output;
 		}
 
@@ -612,22 +624,20 @@ namespace Tensors
 			order[rank - 1] = dim;
 			var permuted = Permute(order);
 			var output = new Tensor(newShape);
-			var lastIndexUpdated = -1;
-			do
+			while (permuted.MoveNext())
 			{
-				if (lastIndexUpdated == rank - 1)
+				if (permuted.lastIndexUpdated == rank - 1)
 				{
-					output.item += permuted.item;
+					output.Current += permuted.Current;
 				}
 				else
 				{
-					output.item /= _dims[dim].size;
-					output.AdvanceOffset();
-					output.item = permuted.item;
+					output.Current /= _dims[dim].size;
+					output.MoveNext();
+					output.Current = permuted.Current;
 				}
-			} while (permuted.AdvanceOffset());
-
-			output.item /= _dims[dim].size;
+			}
+			output.Current /= _dims[dim].size;
 
 			if (Backpropagate != null)
 				output.Backpropagate = grad =>
@@ -645,15 +655,12 @@ namespace Tensors
 			var newShape = a.shape.Take(a.rank - 1).ToArray();
 			newShape[a.rank - 2] = b.shape[b.rank - 2];
 			var output = new Tensor(newShape);
-			var lastIndexUpdated = -1;
-			do
+			while (a.MoveNext() && b.MoveNext())
 			{
-				if (lastIndexUpdated == a.rank - 1)
-					output.AdvanceOffset();
-				output.item += a.item * b.item;
-				a.AdvanceOffset();
-				lastIndexUpdated = a.lastIndexUpdated;
-			} while (lastIndexUpdated >= 0 && b.AdvanceOffset());
+				if (a.lastIndexUpdated == a.rank - 1)
+					output.MoveNext();
+				output.Current += a.Current * b.Current;
+			}
 
 			output.Backpropagate = grad => {
 				if (Backpropagate != null)
@@ -667,10 +674,13 @@ namespace Tensors
 
 		public void AddM_(Tensor other, double multiplier = 1)
 		{
-			ResetOffset();
-			other.ResetOffset();
-			do { item += other.item * multiplier; }
-			while (AdvanceOffset() && other.AdvanceOffset());
+			Reset();
+			other.Reset();
+			while (MoveNext() && other.MoveNext()) { Current += other.Current * multiplier; }
 		}
-	}
+
+		// The IEnumerator must be disposable, but in our case the IEnumerator == the 
+		// IEnumerable which we want to keep, so we just do nothing.
+        void IDisposable.Dispose() {}
+    }
 }

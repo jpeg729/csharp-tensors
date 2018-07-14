@@ -13,9 +13,8 @@ namespace Tensors
 		public static void FillWithRange_(this Tensor t, double start = 0, double step = 1)
 		{
 			t.WarnAboutInplaceModification();
-			t.ResetOffset();
-			do { t.SetItem(start); start += step; }
-			while (t.AdvanceOffset());
+			t.Reset();
+			while (t.MoveNext()) { t.SetCurrent(start); start += step; }
 		}
 
 		public static void FillEye_(this Tensor t, int dim1, int dim2)
@@ -26,9 +25,8 @@ namespace Tensors
 		public static void FillUniform_(this Tensor t, double minval = 0, double maxval = 1)
 		{
 			t.WarnAboutInplaceModification();
-			t.ResetOffset();
-			do { t.SetItem(minval + Tensor._rng.NextDouble() * (maxval - minval)); }
-			while (t.AdvanceOffset());
+			t.Reset();
+			while (t.MoveNext()) { t.SetCurrent(minval + Tensor._rng.NextDouble() * (maxval - minval)); }
 		}
 
 		public static void FillNormal_(this Tensor t, double mean = 0, double std = 1)
@@ -39,7 +37,7 @@ namespace Tensors
 			// .8796 = scipy.stats.truncnorm.std(a=-2, b=2, loc=0., scale=1.)
 			std /= .8796;
 
-			do // The Box-Muller transform gives two values each time
+			while (t.MoveNext()) // The Box-Muller transform gives two values each time
 			{
 				var distance = Math.Sqrt(-2.0 * Math.Log(Tensor._rng.NextDouble()));
 				var angle = 2.0 * Math.PI * Tensor._rng.NextDouble();
@@ -48,14 +46,14 @@ namespace Tensors
 				var randomBit = distance * Math.Sin(angle);
 				if (Math.Abs(randomBit) <= 2)
 				{
-					t.SetItem(mean + std * randomBit);
-					if (!t.AdvanceOffset())
+					t.SetCurrent(mean + std * randomBit);
+					if (!t.MoveNext())
 						break;
 				}
 				randomBit = distance * Math.Cos(angle);
 				if (Math.Abs(randomBit) <= 2)
-					t.SetItem(mean + std * randomBit);
-			} while (t.AdvanceOffset());
+					t.SetCurrent(mean + std * randomBit);
+			}
 		}
 
 		public static void InitialiseWeights_(this Tensor t, Distribution dist, Activation activation, int fan, double activationParam = 0)
