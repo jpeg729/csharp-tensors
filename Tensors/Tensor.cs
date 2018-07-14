@@ -209,17 +209,16 @@ namespace Tensors
 
             Reset();
             other.Reset();
-            while (MoveNext() && other.MoveNext()) {
+            while (MoveNext() && other.MoveNext())
                 if (Math.Abs(Current - other.Current) > tolerance) return false;
-            }
             return true;
         }
 
         public void Fill_(double value)
         {
             WarnAboutInplaceModification();
-            Reset();
-            while (MoveNext()) { Current = value; }
+            foreach (var unused in this)
+                Current = value;
         }
 
         public override string ToString() => $"Tensor of shape {shapeStr}";
@@ -325,7 +324,8 @@ namespace Tensors
         {
             var output = new Tensor(shape);
             Reset();
-            while (MoveNext() && output.MoveNext()) { output.Current = Current; }
+            while (MoveNext() && output.MoveNext())
+                output.Current = Current;
             return output;
         }
 
@@ -471,7 +471,8 @@ namespace Tensors
             var output = new Tensor(a.shape);
             output.noGrad = a.noGrad;
             a.Reset();
-            while (output.MoveNext() && a.MoveNext()) { output.Current = calcFn(a.Current); }
+            while (output.MoveNext() && a.MoveNext())
+                output.Current = calcFn(a.Current);
             return output;
         }
 
@@ -480,9 +481,8 @@ namespace Tensors
             var output = new Tensor(a.shape);
             output.noGrad = a.noGrad || b.noGrad;
             Broadcast(a, b, out Tensor c, out Tensor d);
-            c.Reset();
-            d.Reset();
-            while (output.MoveNext() && c.MoveNext() && d.MoveNext()) { output.Current = calcFn(c.Current, d.Current); }
+            while (output.MoveNext() && c.MoveNext() && d.MoveNext())
+                output.Current = calcFn(c.Current, d.Current);
             return output;
         }
 
@@ -492,9 +492,9 @@ namespace Tensors
             output.noGrad = a.noGrad || b.noGrad || c.noGrad;
             a.Reset();
             b.Reset();
-            while (output.MoveNext() && a.MoveNext() && b.MoveNext() && c.MoveNext()) {
+            c.Reset();
+            while (output.MoveNext() && a.MoveNext() && b.MoveNext() && c.MoveNext())
                 output.Current = calcFn(a.Current, b.Current, c.Current);
-            }
             return output;
         }
 
@@ -622,10 +622,7 @@ namespace Tensors
         public Tensor MatrixMultiply(Tensor other)
         {
             var otherT = other.T();
-            Broadcast(
-                this.Unsqueeze(this.rank - 1),
-                otherT.Unsqueeze(other.rank - 2),
-                out Tensor a, out Tensor b);
+            Broadcast(this.Unsqueeze(this.rank - 1), otherT.Unsqueeze(other.rank - 2), out Tensor a, out Tensor b);
             var newShape = a.shape.Take(a.rank - 1).ToArray();
             newShape[a.rank - 2] = b.shape[b.rank - 2];
             var output = new Tensor(newShape);
@@ -649,7 +646,8 @@ namespace Tensors
         {
             Reset();
             other.Reset();
-            while (MoveNext() && other.MoveNext()) { Current += other.Current * multiplier; }
+            while (MoveNext() && other.MoveNext())
+                Current += other.Current * multiplier;
         }
 
         // The IEnumerator must be disposable, but in our case the IEnumerator == the 

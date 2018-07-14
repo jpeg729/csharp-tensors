@@ -14,9 +14,8 @@ namespace Tensors
         {
             t.WarnAboutInplaceModification();
             t.Reset();
-            while (t.MoveNext()) {
+            while (t.MoveNext())
                 t.SetCurrent(start); start += step;
-            }
         }
 
         public static void FillEye_(this Tensor t, int dim1, int dim2)
@@ -28,9 +27,8 @@ namespace Tensors
         {
             t.WarnAboutInplaceModification();
             t.Reset();
-            while (t.MoveNext()) {
+            while (t.MoveNext())
                 t.SetCurrent(minval + Tensor._rng.NextDouble() * (maxval - minval));
-            }
         }
 
         public static void FillNormal_(this Tensor t, double mean = 0, double std = 1)
@@ -64,11 +62,11 @@ namespace Tensors
             // Choosing fan_in preserves the magnitude of the variance of the weights in the forward pass. 
             // Choosing fan_out preserves the magnitudes in the backwards pass.
             double gain = 1;
-            if (activation == Activation.ReLU)
+            if (activation == Activation.ReLU) {
                 gain = Math.Sqrt(2 / (1 + activationParam));
-            else if (activation == Activation.Tanh)
+            } else if (activation == Activation.Tanh) {
                 gain = 1.1;
-
+            }
             if (dist == Distribution.Uniform) {
                 var limit = Math.Sqrt(3.0 / fan);
                 Console.WriteLine($"InitialiseWeights using limit {limit}");
