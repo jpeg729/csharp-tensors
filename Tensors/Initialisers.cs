@@ -14,8 +14,10 @@ namespace Tensors
         {
             t.WarnAboutInplaceModification();
             t.Reset();
-            while (t.MoveNext())
-                t.SetCurrent(start); start += step;
+            while (t.MoveNext()) {
+                t.SetCurrent(start);
+                start += step;
+            }
         }
 
         public static void FillEye_(this Tensor t, int dim1, int dim2)
