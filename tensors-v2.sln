@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tensors", "Tensors\Tensors.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MnistExample", "MnistExample\MnistExample.csproj", "{17D00D83-F4B3-4B31-B056-7F2886517091}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tensors.Test", "Tensors.Test\Tensors.Test.csproj", "{11751B44-FFCD-4B44-BA88-304FAFD4F406}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,5 +46,17 @@ Global
 		{17D00D83-F4B3-4B31-B056-7F2886517091}.Release|x64.Build.0 = Release|Any CPU
 		{17D00D83-F4B3-4B31-B056-7F2886517091}.Release|x86.ActiveCfg = Release|Any CPU
 		{17D00D83-F4B3-4B31-B056-7F2886517091}.Release|x86.Build.0 = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|x64.Build.0 = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Debug|x86.Build.0 = Debug|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|Any CPU.Build.0 = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|x64.ActiveCfg = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|x64.Build.0 = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|x86.ActiveCfg = Release|Any CPU
+		{11751B44-FFCD-4B44-BA88-304FAFD4F406}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

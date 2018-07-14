@@ -13,6 +13,9 @@ namespace Tensors
 
     public class Tensor : IEnumerable<double>, IEnumerator<double>
     {
+        public static bool debugEnumeration = false;
+        public static bool debugGC = false;
+
         internal static System.Random _rng;
         static Tensor() => _rng = new Random();
         public static void Seed(Int32 seed) { _rng = new Random(seed); }
@@ -22,6 +25,7 @@ namespace Tensors
             public int size, stride, index, padLeft, padRight;
             public Padding padType;
             public double padValue;
+            public Dimension Clone() => (Dimension)MemberwiseClone();
         }
 
         private double[] _data;
@@ -53,7 +57,6 @@ namespace Tensors
             WarnAboutInplaceModification();
             Current = value;
         }
-        public static bool debugEnumeration = false;
 
         public Tensor grad;
         public bool noGrad;
@@ -72,8 +75,10 @@ namespace Tensors
             size = data.Length;
             _dims = new Dimension[] { new Dimension { size = size } };
             _data = data;
-            Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
-            Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
+            if (debugGC) {
+                Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+                Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
+            }
         }
 
         public Tensor(params int[] sizes)
@@ -90,9 +95,10 @@ namespace Tensors
                 };
             }
             _data = new double[size];
-            Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
-            Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
-            // TODO TEST assert size == currStride
+            if (debugGC) {
+                Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+                Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
+            }
         }
 
         private Tensor(double[] data, Dimension[] dims, int start, Action<Tensor> Backpropagate, bool noGrad)
@@ -340,11 +346,7 @@ namespace Tensors
 
             var newShape = new Dimension[rank];
             for (var i = 0; i < rank; i++)
-                newShape[i] = new Dimension
-                {
-                    size = _dims[order[i]].size,
-                    stride = _dims[order[i]].stride,
-                };
+                newShape[i] = _dims[order[i]].Clone();
 
             Action<Tensor> permuteGrads = null;
             if (Backpropagate != null)

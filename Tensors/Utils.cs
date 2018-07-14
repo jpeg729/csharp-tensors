@@ -11,28 +11,38 @@ namespace Tensors
 
     public static class Utils
     {
-        public static void PrintContents(this Tensor t)
+        public static void PrintContents(this Tensor t, bool compact = false)
         {
             Console.Error.WriteLine(t);
-            Console.Error.WriteLine(ContentsToString(t));
+            if (compact) {
+                Console.WriteLine("\"" + t.ContentsToString(true) + "\"");
+            } else {
+                Console.Error.WriteLine(ContentsToString(t));
+            }
         }
 
-        public static string ContentsToString(this Tensor t)
+        public static string ContentsToString(this Tensor t, bool compact = false)
         {
+            var comma = compact ? "," : ", ";
+            var newline = compact ? ";" : "\n";
+            var spacing = compact ? "" : "  ";
             t.Reset();
             var output = new StringBuilder(t.size * 10);
             while (t.MoveNext()) {
-                if (t.lastIndexUpdated == t.rank - 1)
-                    output.Append(", ");
-                else if (t.lastIndexUpdated == t.rank - 2)
-                    output.Append("\n  ");
-                else if (t.lastIndexUpdated <= t.rank - 3) {
+                if (t.lastIndexUpdated == t.rank - 1) {
+                    output.Append(comma);
+                } else if (t.lastIndexUpdated == t.rank - 2) {
+                    output.Append(newline);
+                    output.Append(spacing);
+                } else if (t.lastIndexUpdated <= t.rank - 3) {
                     if (t.rank > 2) {
                         if (output.Length > 0)
-                            output.Append("\n");
-                        output.Append($"{String.Join(",", t.indices.Take(t.rank - 2))}:\n");
+                            output.Append(newline);
+                        output.Append(String.Join(comma, t.indices.Take(t.rank - 2)));
+                        output.Append(":");
+                        output.Append(newline);
                     }
-                    output.Append("  ");
+                    output.Append(spacing);
                 }
 
                 // A float32 has an 8-bit exponent and a 23-bit mantissa

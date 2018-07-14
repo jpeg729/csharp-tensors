@@ -11,10 +11,11 @@ namespace MnistExample
             Tensor.Seed(0);
             var t = new Tensor(new int[] { 2, 4, 5, 3 });
             t.FillWithRange_();
-            // t.PrintContents();
-            //t = t.Pad(0, 2, 0, Padding.Const);
-            //Console.WriteLine("Padding done!");
+            t = t.T();
+
             t.PrintContents();
+            Console.WriteLine();
+            t.PrintContents(true);
         }
     }
 }
