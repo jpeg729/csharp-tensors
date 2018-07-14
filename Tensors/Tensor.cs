@@ -13,13 +13,9 @@ namespace Tensors
 
 	public class Tensor
 	{
-		private static System.Random _rng;
-		static void Seed(Int32 seed) { _rng = new Random(seed); }
-
-		static Tensor()
-		{
-			_rng = new Random();
-		}
+		internal static System.Random _rng;
+		static Tensor() =>  _rng = new Random();
+		public static void Seed(Int32 seed) { _rng = new Random(seed); }
 
 		private static double[] MakeDataArray(int size)
 		{
@@ -34,34 +30,30 @@ namespace Tensors
 
 		private double[] _data;
 		private bool _rented = true;
-		private int _start;
+		private readonly int _start;
 		private int _offset;
-		private Dimension[] _dims;
+		private readonly Dimension[] _dims;
 		private Stack<double> _paddingValues;
 
 		private int[] _shape;
-		public int[] shape {
-			get {
-				if (_shape == null)
-					_shape = _dims.Select(s => s.size).ToArray();
-				return _shape;
-			}
-		}
-		public string shapeStr { get { return "(" + String.Join(",", _dims.Select(s => s.size)) + ")"; } }
+		public int[] shape => _shape ?? (_shape = _dims.Select(s => s.size).ToArray());
+		public string shapeStr => "(" + String.Join(",", shape) + ")";
 		public readonly int size;
-		public int rank { get { return _dims.Count(); } }
+		public int rank => _dims.Count();
+		private int _lastIndexUpdated;
 		public int lastIndexUpdated {
-			get { return lastIndexUpdated; } 
-			private set { lastIndexUpdated = value; }
+			get { return _lastIndexUpdated; } 
+			private set { _lastIndexUpdated = value; }
 		}
-		public int[] indices { get { return _dims.Select(s => s.index).ToArray(); } }
+		public int[] indices => _dims.Select(s => s.index).ToArray();
 		public double item {
-			get {
-				if (_paddingValues.Count() > 0)
-					return _paddingValues.Peek();
-				return _data[_offset];
-			}
+			get { return _paddingValues?.Count() > 0 ? _paddingValues.Peek() : _data[_offset]; }
 			private set { _data[_offset] = value; }
+		}
+		public void SetItem(double value)
+		{
+			WarnAboutInplaceModification();
+			item = value;
 		}
 
 		public Tensor grad;
@@ -80,22 +72,26 @@ namespace Tensors
 			_dims = new Dimension[] { new Dimension{ size = size } };
 			_data = data;
 			_rented = false;
+			Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+			Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
 		}
 
 		public Tensor(params int[] sizes)
 		{
 			size = sizes.Aggregate((a, x) => a * x);
 			_dims = new Dimension[sizes.Length];
-			var currStride = 1;
+			var currStride = size;
 			for (var i = 0; i < sizes.Length; i++)
 			{
+				currStride /= sizes[i];
 				_dims[i] = new Dimension{
 					size = sizes[i],
 					stride = sizes[i] > 1 ? currStride : 0,
 				};
-				currStride *= sizes[i];
 			}
 			_data = MakeDataArray(size);
+			Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+			Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
 			// TODO TEST assert size == currStride
 		}
 
@@ -107,50 +103,102 @@ namespace Tensors
 			_start = start;
 			this.Backpropagate = Backpropagate;
 			this.noGrad = noGrad;
+			foreach (var dim in dims)
+			{
+				if (dim.padLeft > 0 || dim.padRight > 0)
+				{
+					_paddingValues = new Stack<double>();
+					break;
+				}
+			}
+			Console.WriteLine($"Data generation {GC.GetGeneration(_data)}");
+			Console.WriteLine($"Tensor generation {GC.GetGeneration(this)}");
 		}
 
-		public void ResetOffset()
+		public void ResetOffset(bool debug = false)
 		{
+			_paddingValues?.Clear();
+			if (debug) Console.Write($"ResetOffset");
 			_offset = _start;
 			for (var i = 0; i < _dims.Count(); i++)
+			{
 				_dims[i].index = 0;
+				if (_dims[i].padLeft > 0 && _dims[i].padType == Padding.Const)
+				{
+					if (debug) Console.Write($" padLeft[{i}] with {_dims[i].padValue}");
+					_paddingValues.Push(_dims[i].padValue);
+				}
+			}
+			lastIndexUpdated = 0;
+			if (debug)
+			{
+				var paddingValues = $"[{String.Join(",", (_paddingValues ?? new Stack<double>()))}]";
+				Console.WriteLine($" {paddingValues}");
+			}
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		public bool AdvanceOffset()
+		public bool AdvanceOffset(bool debug = false)
 		{
+			if (debug)
+			{	
+				string paddingValues = $"[{String.Join(",", (_paddingValues ?? new Stack<double>()))}]";
+				Console.Write($"AdvanceOffset {String.Join(",", indices)} {paddingValues}");
+			}
 			for (var i = _dims.Count() - 1; i >= 0; i--)
 			{
 				var dim = _dims[i];
 				dim.index += 1;
-				if (dim.index <= dim.padLeft)
+				if (debug) Console.Write($" {i}->{dim.index}");
+				if (dim.index < dim.padLeft)
 				{
-					if (dim.padType == Padding.Const)
-						_paddingValues.Push(dim.padValue);
 					lastIndexUpdated = i;
+					if (debug) Console.WriteLine($" paddingLeft {_offset}");
 					return true;
 				}
-				if (dim.index < dim.size - dim.padRight)
+				else if (dim.index == dim.padLeft)
 				{
-					_offset += dim.stride;
 					if (dim.padType == Padding.Const)
 						_paddingValues.Pop();
 					lastIndexUpdated = i;
+					if (debug) Console.WriteLine($" contents {_offset}");
 					return true;
 				}
-				if (dim.index < dim.size)
+				else if (dim.index < dim.size - dim.padRight)
+				{
+					_offset += dim.stride;
+					lastIndexUpdated = i;
+					if (debug) Console.WriteLine($" contents {_offset}");
+					return true;
+				}
+				else if (dim.padRight > 0 && dim.index == dim.size - dim.padRight)
 				{
 					if (dim.padType == Padding.Const)
 						_paddingValues.Push(dim.padValue);
 					lastIndexUpdated = i;
+					if (debug) Console.WriteLine($" paddingRight {_offset}");
 					return true;
 				}
+				else if (dim.index < dim.size)
+				{
+					lastIndexUpdated = i;
+					if (debug) Console.WriteLine($" paddingRight {_offset}");
+					return true;
+				}
+
 				if (dim.padType == Padding.Const)
-					_paddingValues.Pop();
-				_offset -= (dim.size - 1) * dim.stride;
+				{
+					if (dim.padRight > 0)
+						_paddingValues.Pop();
+					if (dim.padLeft > 0)
+						_paddingValues.Push(dim.padValue);
+				}
+				_offset -= (dim.size - dim.padLeft - dim.padRight - 1) * dim.stride;
 				dim.index = 0;
+				Console.Write($"->{dim.index}");
 			}
 			lastIndexUpdated = -1;
+			if (debug) Console.WriteLine($" done {_offset}");
 			return false;
 		}
 
@@ -181,86 +229,17 @@ namespace Tensors
 			while (AdvanceOffset());
 		}
 
-		public void FillEye_()
+		public override string ToString() => $"Tensor of shape {shapeStr}";
+
+		private bool inplaceWarningSent;
+		internal void WarnAboutInplaceModification()
 		{
-			// TODO
-		}
-
-		public void FillUniform_(double minval = 0, double maxval = 1)
-		{
-			WarnAboutInplaceModification();
-			ResetOffset();
-			do { item = minval + _rng.NextDouble() * (maxval - minval); }
-			while (AdvanceOffset());
-		}
-
-		public void FillNormal_(double mean = 0, double std = 1)
-		{
-			WarnAboutInplaceModification();
-
-			// increase std to compensate for truncation at 2*std
-			// .8796 = scipy.stats.truncnorm.std(a=-2, b=2, loc=0., scale=1.)
-			std /= .8796;
-
-			do // The Box-Muller transform gives two values each time
+			if (Backpropagate != null && Backpropagate != StoreGrads && !inplaceWarningSent)
 			{
-				var distance = Math.Sqrt(-2.0 * Math.Log(_rng.NextDouble()));
-				var angle = 2.0 * Math.PI * _rng.NextDouble();
-
-				// Discard values that are more than 2*std away from the mean.
-				var randomBit = distance * Math.Sin(angle);
-				if (Math.Abs(randomBit) <= 2)
-				{
-					item = mean + std * randomBit;
-					if (!AdvanceOffset())
-						break;
-				}
-				randomBit = distance * Math.Cos(angle);
-				if (Math.Abs(randomBit) <= 2)
-					item = mean + std * randomBit;
-			} while (AdvanceOffset());
-		}
-
-		public void InitialiseWeights_(Distribution dist, Activation activation, int fan, double activationParam = 0)
-		{
-			// Choosing fan_in preserves the magnitude of the variance of the weights in the forward pass. 
-			// Choosing fan_out preserves the magnitudes in the backwards pass.
-			double gain = 1;
-			if (activation == Activation.ReLU)
-				gain = Math.Sqrt(2 / (1 + activationParam));
-			else if (activation == Activation.Tanh)
-				gain = 1.1;
-
-			if (dist == Distribution.Uniform)
-			{
-				var limit = Math.Sqrt(3.0 / fan);
-				Console.WriteLine($"InitialiseWeights using limit {limit}");
-				FillUniform_(-limit, limit);
+				inplaceWarningSent = true;
+				Console.WriteLine("WARNING: Inplace modification of tensor contents can mess up the results of automatic differentiation.");
+				Console.WriteLine(Environment.StackTrace);
 			}
-			else if (dist == Distribution.Normal)
-			{
-				var std = Math.Sqrt(1.0 / fan);
-				Console.WriteLine($"InitialiseWeights using std {std}");
-				FillNormal_(0, std);
-			}
-		}
-
-		public override string ToString()
-		{
-			return $"Tensor of shape {shapeStr}" +
-				(size == 1 ? $" containing value {_data[_start]}" : "");
-		}
-
-		private void ShowWarningAndStackTrace(string warning)
-		{
-			Console.WriteLine("WARNING: " + warning);
-			Console.WriteLine(Environment.StackTrace);
-		}
-
-		private void WarnAboutInplaceModification()
-		{
-			if (Backpropagate != null && Backpropagate != StoreGrads)
-				ShowWarningAndStackTrace("Inplace modification of tensor contents can mess up the results of automatic differentiation.");
 		}
 
 		public void Backward(double errorScale = 1)
@@ -296,17 +275,9 @@ namespace Tensors
 			}
 		}
 
-		public void ClearGrads()
-		{
-			grad = null;
-		}
+		public void ClearGrads() => grad = null;
 
-		public Tensor Detach()
-		{
-			return new Tensor(_data, _dims, _start, null, noGrad);
-		}
-
-		public static void Broadcast(Tensor inA, Tensor inB, ref Tensor outA, ref Tensor outB)
+		public static void Broadcast(Tensor inA, Tensor inB, out Tensor outA, out Tensor outB)
 		{
 			var broadcastRank = Math.Max(inA.rank, inB.rank);
 			var newShapeA = new Dimension[broadcastRank];
@@ -421,6 +392,17 @@ namespace Tensors
 			return output;
 		}
 
+		public Tensor MergeDimWithNext(int dim, int count)
+		{
+			// 
+			throw new NotImplementedException();
+		}
+
+		public Tensor ReshapeDim(int dim, int[] shape)
+		{
+			throw new NotImplementedException();
+		}
+
 		public Tensor Reshape(int[] shape)
 		{
 			throw new NotImplementedException();
@@ -523,8 +505,7 @@ namespace Tensors
 		{
 			var output = new Tensor(a.shape);
 			output.noGrad = a.noGrad || b.noGrad;
-			Tensor c = null, d = null;
-			Broadcast(a, b, ref c, ref d);
+			Broadcast(a, b, out Tensor c, out Tensor d);
 			c.ResetOffset();
 			d.ResetOffset();
 			do { output.item = calcFn(c.item, d.item); }
@@ -657,11 +638,10 @@ namespace Tensors
 		public Tensor MatrixMultiply(Tensor other)
 		{
 			var otherT = other.T();
-			Tensor a = null, b = null;
 			Broadcast(
 				this.Unsqueeze(this.rank - 1),
 				otherT.Unsqueeze(other.rank - 2),
-				ref a, ref b);
+				out Tensor a, out Tensor b);
 			var newShape = a.shape.Take(a.rank - 1).ToArray();
 			newShape[a.rank - 2] = b.shape[b.rank - 2];
 			var output = new Tensor(newShape);

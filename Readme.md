@@ -27,7 +27,6 @@ the whether the resulting slowdown is acceptable remains to be tested.
   The resulting model uses fewer params, runs faster, and gives great results.
 * Tests - TODO
 
-
 ### Copy on write
 
 Modifying the data contained in a Tensor is avoided where possible in order to enable
@@ -138,3 +137,62 @@ WIP
 All math operations should return a Tensor containing the result of the calculation
 with a Backwards delegate that calculates the gradient and calls Backwards on all 
 the tensors that were given as inputs to the operation.
+
+## Performance improvement ideas
+
+### Implement a pool for data arrays
+
+The problem is that a tensor's data array can be huge and when it is too big (> 85kbytes?)
+the data array is automatically put into GC's generation 2 pool, which means collecting it
+will be expensive. Besides an array is always zeroed on allocation, which isn't always
+necessary.
+
+Maintaining a pool of reusable data arrays would be a great solution.
+
+1. by making Tensor Disposable in order to track use of said arrays
+  > output = model.forward(input);
+  > loss = Lossfn(output, target);
+  > loss.backward();
+  > loss.Dispose(); // should back up the chain disposing all calculated Tensors it finds.
+    class Tensor : IDisposable {
+      public void Dispose() {
+        _data.referenceCount--;
+        _data = null;
+        GC.SuppressFinalize(this);
+      }
+      ~Tensor() {
+        Dispose();
+      }
+      public double[] GetDataArray(int size) {
+        returns a free data array from the pool, or makes a new one.
+      }
+    }
+  Question:
+    when the finaliser runs, has the data array already been disposed of?
+
+
+2. using weak refs to the Tensors that use each array
+  for each data array maintain a list of WeakReferences to the tensors that use it...
+  pool = Dict<int, List<WeakReference<Tensor>>>
+  pool[size].RemoveAll(w => !w.IsAlive);
+
+3. using GCHandles directly
+  WeakReferences are objects with destructors, hence expensive...
+  Use list of GCHandle.Alloc(tensor, GCHandleType.Weak)
+  Change target by handle.Target = otherTensor
+  Note that a GCHandle must be .Free()d after use
+
+### Independant AdvanceOffset for padded Tensors
+
+I could create PlainAdvanceOffset and PaddedAdvanceOffset methods and an AdvanceOffset 
+delegate to hold the relevant one, but calling the delegate will be more expensive than
+calling a single AdvanceOffset method directly. Besides, the current AdvanceOffset method
+is aggressively inlined which would be impossible with a delegate.
+
+What about subclassing Tensor?
+Could I do Tensor mytensor = new PaddedTensor(...);
+
+### If Tensor were a struct instead of a class...
+
+Firstly, is it possible and what changes would be necessary?
+Secondly, what would be the result of this?

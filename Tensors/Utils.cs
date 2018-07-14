@@ -9,31 +9,31 @@ using System.Runtime.CompilerServices;
 namespace Tensors
 {
     
-    class Utils
+    public static class Utils
     {
-        public void PrintContents(Tensor t)
+        public static void PrintContents(Tensor t)
         {
             Console.Error.WriteLine(t);
             Console.Error.WriteLine(ContentsToString(t));
         }
 
-        public string ContentsToString(Tensor t)
+        public static string ContentsToString(Tensor t)
         {
             t.ResetOffset();
             var output = new StringBuilder(t.size * 10);
-            var indices = new int[t.rank];
-            var lastIndexUpdated = t.rank - 3;
-            var prevIndexUpdated = lastIndexUpdated;
-            do
+            while (true)
             {
-                if (lastIndexUpdated <= t.rank - 3)
+                if (t.lastIndexUpdated <= t.rank - 3)
                 {
                     if (t.rank > 2)
-                        output.Append($"{String.Join(",", indices.Take(t.rank - 2))}:\n");
-                    
+                    {
+                        if (output.Length > 0)
+                            output.Append("\n");
+                        output.Append($"{String.Join(",", t.indices.Take(t.rank - 2))}:\n");
+                    }
                     output.Append("  ");
                 }
-                if (lastIndexUpdated == t.rank - 2)
+                if (t.lastIndexUpdated == t.rank - 2)
                     output.Append("\n  ");
 
                 // A float32 has an 8-bit exponent and a 23-bit mantissa
@@ -45,21 +45,21 @@ namespace Tensors
                 // So 5 digits of precision should be enough for us.
                 output.Append(t.item.ToString("g5", CultureInfo.InvariantCulture));
 
-                indices[lastIndexUpdated] += 1;
-                if (prevIndexUpdated != lastIndexUpdated)
+                try
                 {
-                    for (var i = lastIndexUpdated + 1; i <= prevIndexUpdated; i++)
-                        indices[i] = 0;
-                    
-                    prevIndexUpdated = lastIndexUpdated;
+                    if (!t.AdvanceOffset())
+                        break;
                 }
-                t.AdvanceOffset();
-                lastIndexUpdated = t.lastIndexUpdated;
+                catch
+                {
+                    Console.WriteLine(output);
+                    Console.WriteLine(Environment.StackTrace);
+                    return "Error while reading contents";
+                }
 
-                if (lastIndexUpdated == t.rank - 1 && lastIndexUpdated == prevIndexUpdated)
+                if (t.lastIndexUpdated == t.rank - 1)
                     output.Append(", ");
-                
-            } while (lastIndexUpdated >= 0);
+            }
 
             return output.ToString();
         }
