@@ -51,24 +51,36 @@ namespace Tensors.Test
             Assert.True(t.T().T().CloseTo(t));
         }
 
-        [Fact]
-        public void TestUnPermute()
+        [Theory]
+        [InlineData(0, 1, 2, 3)]
+        [InlineData(0, 2, 1, 3)]
+        [InlineData(1, 2, 0, 3)]
+        [InlineData(1, 0, 2, 3)]
+        [InlineData(2, 0, 1, 3)]
+        [InlineData(2, 1, 0, 3)]
+        [InlineData(0, 1, 3, 2)]
+        [InlineData(0, 2, 3, 1)]
+        [InlineData(1, 2, 3, 0)]
+        [InlineData(1, 0, 3, 2)]
+        [InlineData(2, 0, 3, 1)]
+        [InlineData(2, 1, 3, 0)]
+        [InlineData(0, 3, 1, 2)]
+        [InlineData(0, 3, 2, 1)]
+        [InlineData(1, 3, 2, 0)]
+        [InlineData(1, 3, 0, 2)]
+        [InlineData(2, 3, 0, 1)]
+        [InlineData(2, 3, 1, 0)]
+        [InlineData(3, 0, 1, 2)]
+        [InlineData(3, 0, 2, 1)]
+        [InlineData(3, 1, 2, 0)]
+        [InlineData(3, 1, 0, 2)]
+        [InlineData(3, 2, 0, 1)]
+        [InlineData(3, 2, 1, 0)]
+        public void TestUnPermute(params int[] order)
         {
             t.FillWithRange_();
-            for (var n = 0; n < (t.rank ^ 2); n++) {
-                var order = new int[t.rank];
-                for (var i = 0; i < t.rank; i++)
-                    order[i] = i;
-                var rng = new Random();
-                for (var i = 0; i < t.rank - 1; i++) {
-                    var j = rng.Next(i, t.rank);
-                    var tmp = order[i];
-                    order[i] = order[j];
-                    order[j] = tmp;
-                }
-                var t2 = t.Permute(order).Permute(Tensor.UnPermuteOrder(order));
-                Assert.True(t.ContentsToString(true) == t2.ContentsToString(true));
-            }
+            var t2 = t.Permute(order).Permute(Tensor.UnPermuteOrder(order));
+            Assert.True(t.ContentsToString(true) == t2.ContentsToString(true));
         }
     }
 
@@ -130,31 +142,25 @@ namespace Tensors.Test
             Assert.True(t.ContentsToString(true) == "0:;0,20;1,21;2,22;3,23;4,24;1:;5,25;6,26;7,27;8,28;9,29;2:;10,30;11,31;12,32;13,33;14,34;3:;15,35;16,36;17,37;18,38;19,39");
         }
 
-        [Fact]
-        public void TestUnPermute()
+        [Theory]
+        [InlineData(0, 1, 2)]
+        [InlineData(0, 2, 1)]
+        [InlineData(1, 2, 0)]
+        [InlineData(1, 0, 2)]
+        [InlineData(2, 0, 1)]
+        [InlineData(2, 1, 0)]
+        public void TestUnPermute(params int[] order)
         {
             t.FillWithRange_();
-            for (var n = 0; n < (t.rank ^ 2); n++) {
-                var order = new int[t.rank];
-                for (var i = 0; i < t.rank; i++)
-                    order[i] = i;
-                var rng = new Random();
-                for (var i = 0; i < t.rank - 1; i++) {
-                    var j = rng.Next(i, t.rank);
-                    var tmp = order[i];
-                    order[i] = order[j];
-                    order[j] = tmp;
-                }
-                var t2 = t.Permute(order).Permute(Tensor.UnPermuteOrder(order));
-                Assert.True(t.ContentsToString(true) == t2.ContentsToString(true));
-            }
+            var t2 = t.Permute(order).Permute(Tensor.UnPermuteOrder(order));
+            Assert.True(t.ContentsToString(true) == t2.ContentsToString(true));
         }
     }
 
     public class TensorFromDataTests
     {
         [Fact]
-        public void TestCreate()
+        public void TestCreateFromData()
         {
             var d = new double[] { 1, 2, 5, 5 };
             var t = new Tensor(d);
