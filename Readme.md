@@ -1,20 +1,48 @@
 A Tensor class intended to work somewhat like a cross between numpy and pytorch.
 
-The goal is to use neural-nets in competitions on Codingame.com. Hence we need good 
-single-thread performance and small code-size (submissions are limited to 100k file 
-size) while still being fairly complete.
+## Why?
 
-### Status
+1. As a learning experience
+2. For competitions on Codingame.com. Hence we need 
+   - good single-thread performance
+   - small code-size (submissions are limited to 100k file size) 
+   - fairly complete functionality
+
+### Design decisions
+
+Data is stored in a flat array of doubles. The multi-dimensional indexing logic is 
+written so that many tensor reshaping operations can be reduced to re-ordering or
+modification of the strides used to access the data. Most Tensor manipulation 
+operations return a new Tensor object that shares the underlying data array.
+
+Directly modifying the data contained in a Tensor is avoided where possible in order 
+to enable automatic differentiation. For efficiency, tensor manipulation operations 
+generally return a new Tensor that shares the same underlying data array as the 
+original Tensor.
+
+By necessity, some methods do modify the data stored in the Tensor. These methods have
+names that end in an underscore, and all of them return `void` so they can't be chained.
+I may decide that being able to chain inplace modification ops leads to nicer code, in 
+which case they will all return `this`.
+
+Most of the Tensor initializers have been implemented as extension methods because 
+generally we only need them when training new neural networks. Mostly I anticipate 
+running pre-trained neural networks on codingame's servers and this makes it easy to 
+remove the unused initialiser code.
+
+## Status
 
 Full rewrite in progress.
 
-The main change is to overhaul the indexing system. Padding has been built in, though
+The main change has been to overhaul the indexing system. Padding has been built in, though
 the whether the resulting slowdown is acceptable remains to be tested.
 
-* Contiguity tests - TODO
+* Contiguity tests - needed for Reshape stuff
+
 * Tensor manipulation functions - almost done
-  - `MergeDimWithNext(Count)`
-  - `ReshapeDim(dim, newShape)`
+  * Still to do
+    - `MergeDimWithNext(Count)`
+    - `ReshapeDim(dim, newShape)`
   * Unless needed the following will be left out...
     - `Reshape(arbitraryShape)`
     - `Flatten()` - Slower alternative `tensor.Copy().MergeDimWithNext(tensor.rank - 1)`
@@ -22,19 +50,19 @@ the whether the resulting slowdown is acceptable remains to be tested.
     - `Stack(dim, tensor1, tensor2, ...)`
     - `Split(dim, size)`
 * Basic math - done
-* Conv1d - TODO
-  We don't really need 2d convs as a 2d conv can be separated into two 1d convs 1 x N then N x 1.
-  The resulting model uses fewer params, runs faster, and gives great results.
-* Tests - TODO
-
-### Copy on write
-
-Modifying the data contained in a Tensor is avoided where possible in order to enable
-automatic differentiation. For efficiency, tensor manipulation operations generally 
-return a new Tensor that shares the same underlying data array as the original Tensor.
-
-By necessity, some methods do modify the data stored in the Tensor. These methods have
-names that end in an underscore, and all of them return `void` so they can't be chained.
+* Conv1d - TODO. Note that we don't really need 2d convs as a 2d conv can be separated into two 1d convs 1&nbsp;x&nbsp;N then N&nbsp;x&nbsp;1. The resulting model uses fewer params, runs faster, and gives great results.
+* Tests - partially done, the following need to be done
+  - `CloseTo`
+  - `Broadcast`
+  - `Copy`
+  - `Squeeze`
+  - `Unsqueeze`
+  - Sequential slicing - should be ok
+  - Sequential padding - padding the same dim twice currently overwrites the padding
+  - Slicing after padding - will fail if the slice occurs over the same dim as the padding
+  - Other ops after padding - many will fail to copy the padding
+  - `Elementwise`
+  - Math ops
 
 ### Tensor creation
 
@@ -195,4 +223,4 @@ Could I do Tensor mytensor = new PaddedTensor(...);
 ### If Tensor were a struct instead of a class...
 
 Firstly, is it possible and what changes would be necessary?
-Secondly, what would be the result of this?
+Secondly, what would be the consequences of copying the entire struct every time you pass it around?
